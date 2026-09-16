@@ -28,7 +28,17 @@ export async function getCourses(req, res, next) {
 
     const courses = await Course.find(query).sort({ createdAt: -1 });
 
-    // If user is authenticated, attach enrollment status
+    const courseIds = courses.map((c) => c._id);
+    const moduleCounts = await CourseModule.aggregate([
+      { $match: { courseId: { $in: courseIds }, isPublished: true } },
+      { $group: { _id: "$courseId", count: { $sum: 1 } } },
+    ]);
+
+    const moduleCountMap = {};
+    moduleCounts.forEach((m) => {
+      moduleCountMap[m._id.toString()] = m.count;
+    });
+
     let userEnrollmentsMap = {};
     if (req.user && req.user.role === "student") {
       const enrollments = await Enrollment.find({ studentId: req.user._id });
@@ -37,15 +47,26 @@ export async function getCourses(req, res, next) {
           status: e.status,
           progressPercentage: e.progressPercentage,
           completedModulesCount: e.completedModules.length,
+          completedModules: e.completedModules,
           enrollmentId: e._id,
         };
       });
     }
 
-    const coursesWithEnrollment = courses.map((c) => ({
-      ...c.toObject(),
-      enrollment: userEnrollmentsMap[c._id.toString()] || null,
-    }));
+    const coursesWithEnrollment = courses.map((c) => {
+      const cObj = c.toObject();
+      const realModuleCount = moduleCountMap[c._id.toString()] || cObj.totalModules || 0;
+      const enrollment = userEnrollmentsMap[c._id.toString()] || null;
+      const progress = enrollment ? enrollment.progressPercentage : 0;
+      return {
+        ...cObj,
+        totalModules: realModuleCount,
+        modulesCount: realModuleCount,
+        modules: Array.from({ length: realModuleCount }, (_, i) => ({ id: i + 1 })),
+        progress,
+        enrollment,
+      };
+    });
 
     res.json({
       success: true,
@@ -74,9 +95,17 @@ export async function getCourseBySlug(req, res, next) {
 
     const modules = await CourseModule.find({ courseId: course._id, isPublished: true }).sort({ moduleNumber: 1, order: 1 });
 
+    let enrollment = null;
+    if (req.user && req.user.role === "student") {
+      enrollment = await Enrollment.findOne({ studentId: req.user._id, courseId: course._id });
+    }
+
+    const completedModuleIds = (enrollment?.completedModules || []).map((id) => id.toString());
+
     const isPrivileged = req.user && (req.user.role === "admin" || req.user.role === "teacher");
     const sanitizedModules = modules.map((mod) => {
       const obj = mod.toObject();
+      obj.completed = completedModuleIds.includes(obj._id.toString());
       if (!isPrivileged && obj.mcqs) {
         obj.mcqs = obj.mcqs.map((q) => {
           const { correctAnswer, explanation, ...rest } = q;
@@ -86,14 +115,13 @@ export async function getCourseBySlug(req, res, next) {
       return obj;
     });
 
-    let enrollment = null;
-    if (req.user && req.user.role === "student") {
-      enrollment = await Enrollment.findOne({ studentId: req.user._id, courseId: course._id });
-    }
+    const cObj = course.toObject();
+    cObj.totalModules = modules.length;
+    cObj.progress = enrollment ? enrollment.progressPercentage : 0;
 
     res.json({
       success: true,
-      course,
+      course: cObj,
       modules: sanitizedModules,
       enrollment,
     });
@@ -150,8 +178,8 @@ export async function createCourse(req, res, next) {
       durationDays: durationDays ? Number(durationDays) : 30,
       thumbnail: finalThumbnail,
       thumbnailUrl: finalThumbnailUrl,
-      passingScore: passingScore ? Number(passingScore) : 75,
-      passingPercentage: passingPercentage ? Number(passingPercentage) : 75,
+      passingScore: passingScore ? Number(passingScore) : 50,
+      passingPercentage: passingPercentage ? Number(passingPercentage) : 50,
       certificateEnabled: certificateEnabled === "true" || certificateEnabled === true,
       isPublished: true,
       createdBy: req.user._id,
@@ -323,9 +351,9 @@ export async function completeModule(req, res, next) {
       });
     }
 
-    // Add module if not already completed
-    if (!enrollment.completedModules.includes(moduleId)) {
-      enrollment.completedModules.push(moduleId);
+    const strModId = moduleId.toString();
+    if (!enrollment.completedModules.some((m) => m.toString() === strModId)) {
+      enrollment.completedModules.push(strModId);
     }
 
     const totalModules = await CourseModule.countDocuments({ courseId, isPublished: true });
@@ -361,10 +389,21 @@ export async function completeModule(req, res, next) {
     enrollment.lastActivityAt = new Date();
     await enrollment.save();
 
+    const allModules = await CourseModule.find({ courseId, isPublished: true }).sort({ moduleNumber: 1, order: 1 });
+    const completedSet = new Set((enrollment.completedModules || []).map((id) => id.toString()));
+
+    const updatedModules = allModules.map((m) => {
+      const obj = m.toObject();
+      obj.completed = completedSet.has(obj._id.toString());
+      return obj;
+    });
+
     res.json({
       success: true,
       message: "Module marked as completed.",
+      progress: enrollment.progressPercentage,
       enrollment,
+      modules: updatedModules,
       certificate: certificateIssued,
     });
   } catch (error) {

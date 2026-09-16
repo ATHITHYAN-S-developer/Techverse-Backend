@@ -19,6 +19,10 @@ const courseSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    courseDescription: {
+      type: String,
+      default: "",
+    },
     category: {
       type: String,
       default: "Programming",
@@ -26,7 +30,7 @@ const courseSchema = new mongoose.Schema(
     },
     level: {
       type: String,
-      enum: ["Beginner", "Intermediate", "Advanced", "Beginner to Intermediate", "Beginner → Intermediate"],
+      enum: ["Beginner", "Intermediate", "Advanced", "Beginner to Intermediate", "Beginner → Intermediate", "Intermediate to Advanced"],
       default: "Beginner",
     },
     instructor: {
@@ -63,11 +67,11 @@ const courseSchema = new mongoose.Schema(
     },
     passingScore: {
       type: Number,
-      default: 75,
+      default: 50,
     },
     passingPercentage: {
       type: Number,
-      default: 75,
+      default: 50,
     },
     certificateEnabled: {
       type: Boolean,

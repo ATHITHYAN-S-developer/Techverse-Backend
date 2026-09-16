@@ -13,7 +13,7 @@ export async function getResources(req, res, next) {
     const { departmentId, subjectId, classId, type, unit, search } = req.query;
     const { page, limit, skip } = getPagination(req.query, 20);
 
-    const query = { status: "active" };
+    const query = { isPublished: true };
 
     if (departmentId) query.departmentId = departmentId;
     if (subjectId) query.subjectId = subjectId;

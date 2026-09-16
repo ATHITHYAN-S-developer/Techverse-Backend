@@ -24,6 +24,7 @@ import analyticsRoutes from "./routes/analyticsRoutes.js";
 import visitorRoutes from "./routes/visitorRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import trainingRoutes from "./routes/trainingRoutes.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,6 +76,7 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/visitors", visitorRoutes);
 app.use("/api/audit-logs", auditRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/training", trainingRoutes);
 
 // 404 & Error Handlers
 app.use(notFoundHandler);
