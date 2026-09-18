@@ -11,6 +11,7 @@ const resourceSchema = new mongoose.Schema(
     subjectId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Subject",
+      required: [true, "Subject reference is required"],
       index: true,
     },
     title: {
@@ -51,10 +52,35 @@ const resourceSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    originalName: {
+      type: String,
+      default: "",
+    },
+    mimeType: {
+      type: String,
+      default: "application/octet-stream",
+    },
+    fileType: {
+      type: String,
+      default: "application/pdf",
+    },
+    unit: {
+      type: Number,
+      default: 0,
+    },
+    tags: {
+      type: [String],
+      default: [],
+    },
     uploadedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+    },
+    uploaderRole: {
+      type: String,
+      enum: ["teacher", "admin", "student"],
+      default: "teacher",
     },
     fileSize: {
       type: String,

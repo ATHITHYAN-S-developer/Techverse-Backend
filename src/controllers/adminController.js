@@ -176,20 +176,96 @@ export async function resetPassword(req, res, next) {
 }
 
 /**
- * @route   DELETE /api/admin/users/:id
- * @desc    Soft delete or deactivate user
+ * @route   PUT /api/admin/users/:id
+ * @desc    Update user profile (incl. department assignment)
  * @access  Protected (Admin only)
  */
-export async function deleteUser(req, res, next) {
+export async function updateUser(req, res, next) {
   try {
-    const user = await User.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
+    const { id } = req.params;
+
+    const user = await User.findById(id);
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found." });
     }
 
+    const allowed = ["name", "email", "staffId", "username", "registerNumber", "designation", "classId", "departmentId", "phone", "profileImage"];
+    const updates = {};
+    for (const field of allowed) {
+      if (req.body[field] !== undefined) {
+        updates[field] = field === "email" ? req.body[field].toLowerCase() : req.body[field];
+      }
+    }
+
+    // Uniqueness pre-checks (friendly 400 instead of duplicate key error)
+    const uniqueFields = ["email", "staffId", "username", "registerNumber"];
+    for (const field of uniqueFields) {
+      if (updates[field] === undefined) continue;
+      const conflict = await User.findOne({
+        [field]: new RegExp(`^${updates[field].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
+        _id: { $ne: user._id },
+      });
+      if (conflict) {
+        return res.status(400).json({
+          success: false,
+          message: `Another user already uses this ${field}.`,
+        });
+      }
+    }
+
+    Object.assign(user, updates);
+    await user.save();
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userIdentifier: req.user.username || req.user.email,
+      userName: req.user.name,
+      role: req.user.role,
+      action: "UPDATE",
+      resourceType: "User",
+      resourceId: user._id.toString(),
+      details: `Updated user profile: ${user.name}${updates.departmentId ? " (reassigned department)" : ""}`,
+    });
+
     res.json({
       success: true,
-      message: "User account deactivated.",
+      message: "User updated successfully.",
+      user: user.toSafeObject(),
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   DELETE /api/admin/users/:id
+ * @desc    Permanently delete user account
+ * @access  Protected (Admin only)
+ */
+export async function deleteUser(req, res, next) {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    const { name, role, staffId, registerNumber, email, username, _id } = user;
+    await user.deleteOne();
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userIdentifier: req.user.username || req.user.email,
+      userName: req.user.name,
+      role: req.user.role,
+      action: "DELETE",
+      resourceType: "User",
+      resourceId: _id.toString(),
+      details: `Permanently deleted ${role} account: ${name} (${staffId || registerNumber || username || email})`,
+    });
+
+    res.json({
+      success: true,
+      message: "User account permanently deleted.",
     });
   } catch (error) {
     next(error);

@@ -3,6 +3,7 @@ import { User } from "../models/User.js";
 import { Subject } from "../models/Subject.js";
 import { Resource } from "../models/Resource.js";
 import { logAuditEvent } from "../services/auditService.js";
+import { removeResourceFiles } from "../utils/resourceFiles.js";
 
 /**
  * @route   GET /api/departments
@@ -11,7 +12,10 @@ import { logAuditEvent } from "../services/auditService.js";
  */
 export async function getAllDepartments(req, res, next) {
   try {
-    const departments = await Department.find({ isActive: true }).sort({ name: 1 });
+    const { all } = req.query;
+    const filter = all === "true" ? {} : { isActive: true };
+
+    const departments = await Department.find(filter).sort({ name: 1 });
 
     // Populate extra metrics for departments
     const departmentsWithStats = await Promise.all(
@@ -19,7 +23,7 @@ export async function getAllDepartments(req, res, next) {
         const [studentCount, teacherCount, resourceCount, subjectCount] = await Promise.all([
           User.countDocuments({ departmentId: dept._id, role: "student", isActive: true }),
           User.countDocuments({ departmentId: dept._id, role: "teacher", isActive: true }),
-          Resource.countDocuments({ departmentId: dept._id, status: "active" }),
+          Resource.countDocuments({ departmentId: dept._id, isPublished: true }),
           Subject.countDocuments({ departmentId: dept._id, isActive: true }),
         ]);
 
@@ -80,7 +84,7 @@ export async function getDepartmentById(req, res, next) {
  */
 export async function createDepartment(req, res, next) {
   try {
-    const { _id, code, name, description, icon, color } = req.body;
+    const { code, name, description, icon, color, hodName } = req.body;
 
     if (!code || !name) {
       return res.status(400).json({
@@ -89,22 +93,21 @@ export async function createDepartment(req, res, next) {
       });
     }
 
-    const deptId = _id || code.toLowerCase();
-    const existing = await Department.findById(deptId);
+    const existing = await Department.findOne({ code: code.toUpperCase() });
     if (existing) {
       return res.status(400).json({
         success: false,
-        message: "Department with this ID or Code already exists.",
+        message: "Department with this code already exists.",
       });
     }
 
     const department = await Department.create({
-      _id: deptId,
       code: code.toUpperCase(),
       name,
       description,
       icon,
       color,
+      hodName,
     });
 
     await logAuditEvent({
@@ -154,21 +157,45 @@ export async function updateDepartment(req, res, next) {
 
 /**
  * @route   DELETE /api/departments/:id
- * @desc    Soft delete department
+ * @desc    Hard delete department (cascades subjects, resources and files)
  * @access  Protected (Admin only)
  */
 export async function deleteDepartment(req, res, next) {
   try {
     const { id } = req.params;
-    const department = await Department.findByIdAndUpdate(id, { isActive: false }, { new: true });
+    const department = await Department.findById(id);
 
     if (!department) {
       return res.status(404).json({ success: false, message: "Department not found." });
     }
 
+    const subjectIds = await Subject.find({ departmentId: id }).distinct("_id");
+    const resourceFilter = {
+      $or: [{ departmentId: id }, ...(subjectIds.length ? [{ subjectId: { $in: subjectIds } }] : [])],
+    };
+
+    const resources = await Resource.find(resourceFilter);
+    removeResourceFiles(resources);
+
+    await Resource.deleteMany(resourceFilter);
+    await Subject.deleteMany({ departmentId: id });
+    await User.updateMany({ departmentId: id }, { $set: { departmentId: null } });
+    await department.deleteOne();
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userIdentifier: req.user.username || req.user.email,
+      userName: req.user.name,
+      role: req.user.role,
+      action: "DELETE",
+      resourceType: "Department",
+      resourceId: department._id,
+      details: `Permanently deleted department ${department.name} (${department.code}) with ${resources.length} resources across ${subjectIds.length} subjects`,
+    });
+
     res.json({
       success: true,
-      message: "Department deactivated successfully.",
+      message: "Department permanently deleted along with its subjects and resources.",
     });
   } catch (error) {
     next(error);

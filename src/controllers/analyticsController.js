@@ -133,8 +133,8 @@ export async function getDepartmentDetails(req, res, next) {
     const [students, teachers, resources, subjects] = await Promise.all([
       User.countDocuments({ departmentId, role: "student", isActive: true }),
       User.countDocuments({ departmentId, role: "teacher", isActive: true }),
-      Resource.find({ departmentId, status: "active" }).select("type downloadCount createdAt"),
-      Resource.countDocuments({ departmentId, status: "active" }),
+      Resource.find({ departmentId, isPublished: true }).select("type downloadsCount createdAt"),
+      Resource.countDocuments({ departmentId, isPublished: true }),
     ]);
 
     const totalDownloads = resources.reduce((acc, r) => acc + (r.downloadCount || 0), 0);

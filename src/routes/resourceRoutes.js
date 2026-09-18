@@ -9,8 +9,8 @@ import {
 } from "../controllers/resourceController.js";
 import { authenticate } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/roleMiddleware.js";
-import { enforceDepartmentMatch } from "../middleware/departmentMiddleware.js";
-import { upload } from "../utils/fileUpload.js";
+import { enforceDepartmentMatch, checkDepartmentAccess } from "../middleware/departmentMiddleware.js";
+import { uploadResourceFile } from "../utils/fileUpload.js";
 
 const router = express.Router();
 
@@ -20,12 +20,25 @@ router.post(
   "/",
   authenticate,
   authorize("teacher", "admin"),
-  upload.single("file"),
+  uploadResourceFile.single("file"),
   enforceDepartmentMatch,
   createResource
 );
-router.put("/:id", authenticate, authorize("teacher", "admin"), updateResource);
-router.delete("/:id", authenticate, authorize("teacher", "admin"), deleteResource);
+router.put(
+  "/:id",
+  authenticate,
+  authorize("teacher", "admin"),
+  checkDepartmentAccess("resource"),
+  uploadResourceFile.single("file"),
+  updateResource
+);
+router.delete(
+  "/:id",
+  authenticate,
+  authorize("teacher", "admin"),
+  checkDepartmentAccess("resource"),
+  deleteResource
+);
 router.post("/:id/download", trackDownload);
 
 export default router;

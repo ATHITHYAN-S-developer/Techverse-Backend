@@ -2,6 +2,7 @@ import express from "express";
 import {
   getUsers,
   createUser,
+  updateUser,
   toggleUserStatus,
   resetPassword,
   deleteUser,
@@ -15,6 +16,7 @@ router.use(authenticate, authorize("admin"));
 
 router.get("/users", getUsers);
 router.post("/users", createUser);
+router.put("/users/:id", updateUser);
 router.put("/users/:id/status", toggleUserStatus);
 router.put("/users/:id/reset-password", resetPassword);
 router.delete("/users/:id", deleteUser);
