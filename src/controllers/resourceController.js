@@ -1,7 +1,12 @@
+import fs from "fs";
+import path from "path";
 import { Resource } from "../models/Resource.js";
+import { Department } from "../models/Department.js";
+import { Subject } from "../models/Subject.js";
 import { getPagination } from "../utils/pagination.js";
-import { generateCustomId } from "../utils/generateId.js";
 import { logAuditEvent } from "../services/auditService.js";
+
+const UPLOADS_ROOT = path.join(process.cwd(), "uploads", "resources");
 
 /**
  * @route   GET /api/resources
@@ -10,16 +15,40 @@ import { logAuditEvent } from "../services/auditService.js";
  */
 export async function getResources(req, res, next) {
   try {
-    const { departmentId, subjectId, classId, type, unit, search } = req.query;
+    const { departmentId, subjectId, classId, type, unit, search, all } = req.query;
     const { page, limit, skip } = getPagination(req.query, 20);
 
-    const query = { status: "active" };
+    const query = { isPublished: true };
 
     if (departmentId) query.departmentId = departmentId;
     if (subjectId) query.subjectId = subjectId;
     if (classId) query.classId = classId;
     if (type) query.type = type;
     if (unit) query.unit = Number(unit);
+
+    // Hidden content belonging to deactivated departments/subjects
+    if (all !== "true") {
+      const activeDeptIds = await Department.find({ isActive: true }).distinct("_id");
+      if (departmentId) {
+        query.$and = [{ departmentId: { $in: activeDeptIds } }];
+      } else {
+        query.departmentId = { $in: activeDeptIds };
+      }
+
+      if (!subjectId) {
+        const activeSubjectIds = await Subject.find({ isActive: true }).distinct("_id");
+        query.$and = [
+          ...(query.$and || []),
+          {
+            $or: [
+              { subjectId: { $in: activeSubjectIds } },
+              { subjectId: null },
+              { subjectId: { $exists: false } },
+            ],
+          },
+        ];
+      }
+    }
 
     if (search) {
       query.$or = [
@@ -67,7 +96,7 @@ export async function getResourceById(req, res, next) {
       .populate("subjectId", "code name")
       .populate("uploadedBy", "name staffId role");
 
-    if (!resource || resource.status !== "active") {
+    if (!resource || !resource.isPublished) {
       return res.status(404).json({ success: false, message: "Resource not found." });
     }
 
@@ -106,20 +135,21 @@ export async function createResource(req, res, next) {
     }
 
     // Auto-derive file information if uploaded via multipart
-    let finalFileUrl = fileUrl;
+    let finalFileUrl = fileUrl || req.body.externalUrl || "";
     let finalFileSize = fileSize;
     let finalFileType = fileType;
+    let finalOriginalName = "";
+    let finalMimeType = "";
 
     if (req.file) {
-      finalFileUrl = `/uploads/${req.file.filename}`;
+      finalFileUrl = `/uploads/resources/${req.file.filename}`;
       finalFileSize = `${(req.file.size / (1024 * 1024)).toFixed(2)} MB`;
       finalFileType = req.file.mimetype;
+      finalOriginalName = req.file.originalname;
+      finalMimeType = req.file.mimetype;
     }
 
-    const _id = generateCustomId("res");
-
     const newResource = await Resource.create({
-      _id,
       title,
       description,
       departmentId,
@@ -129,8 +159,10 @@ export async function createResource(req, res, next) {
       fileUrl: finalFileUrl || "https://vcet.ac.in/resources/sample.pdf",
       fileSize: finalFileSize || "2.4 MB",
       fileType: finalFileType || "application/pdf",
+      originalName: finalOriginalName,
+      mimeType: finalMimeType,
       unit: unit ? Number(unit) : undefined,
-      tags: Array.isArray(tags) ? tags : String(tags).split(",").map(t => t.trim()),
+      tags: Array.isArray(tags) ? tags : String(tags || "").split(",").map(t => t.trim()).filter(Boolean),
       uploadedBy: req.user._id,
       uploaderRole: req.user.role,
     });
@@ -163,21 +195,64 @@ export async function createResource(req, res, next) {
  */
 export async function updateResource(req, res, next) {
   try {
-    const resource = await Resource.findById(req.params.id);
+    const resource = req.targetResource || (await Resource.findById(req.params.id));
     if (!resource) {
       return res.status(404).json({ success: false, message: "Resource not found." });
     }
 
-    // Enforce teacher department isolation
-    if (req.user.role === "teacher" && resource.departmentId !== req.user.departmentId) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only modify resources within your assigned department.",
-      });
+    const allowedFields = [
+      "title",
+      "description",
+      "subjectId",
+      "classId",
+      "type",
+      "unit",
+      "tags",
+      "fileUrl",
+      "externalUrl",
+      "downloadUrl",
+      "fileSize",
+      "isPublished",
+    ];
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        resource[field] = req.body[field];
+      }
     }
 
-    Object.assign(resource, req.body);
+    // Optional file replacement
+    if (req.file) {
+      // Remove previous stored file (if it lived on this server)
+      if (resource.fileUrl && resource.fileUrl.startsWith("/uploads/resources/")) {
+        const oldPath = path.join(UPLOADS_ROOT, path.basename(resource.fileUrl));
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      }
+      resource.fileUrl = `/uploads/resources/${req.file.filename}`;
+      resource.fileSize = `${(req.file.size / (1024 * 1024)).toFixed(2)} MB`;
+      resource.fileType = req.file.mimetype;
+      resource.originalName = req.file.originalname;
+      resource.mimeType = req.file.mimetype;
+    }
+
+    if (resource.tags && typeof resource.tags === "string") {
+      resource.tags = resource.tags.split(",").map(t => t.trim()).filter(Boolean);
+    }
+
     await resource.save();
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userIdentifier: req.user.staffId || req.user.username || req.user.email,
+      userName: req.user.name,
+      role: req.user.role,
+      action: "UPDATE",
+      resourceType: "Resource",
+      resourceId: resource._id,
+      details: `Updated resource '${resource.title}'`,
+    });
 
     res.json({
       success: true,
@@ -191,25 +266,25 @@ export async function updateResource(req, res, next) {
 
 /**
  * @route   DELETE /api/resources/:id
- * @desc    Soft delete resource
+ * @desc    Hard delete resource + remove stored file
  * @access  Protected (Teacher / Admin)
  */
 export async function deleteResource(req, res, next) {
   try {
-    const resource = await Resource.findById(req.params.id);
+    const resource = req.targetResource || (await Resource.findById(req.params.id));
     if (!resource) {
       return res.status(404).json({ success: false, message: "Resource not found." });
     }
 
-    if (req.user.role === "teacher" && resource.departmentId !== req.user.departmentId) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only delete resources within your assigned department.",
-      });
+    // Remove stored file from server disk
+    if (resource.fileUrl && resource.fileUrl.startsWith("/uploads/resources/")) {
+      const filePath = path.join(UPLOADS_ROOT, path.basename(resource.fileUrl));
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
     }
 
-    resource.status = "archived";
-    await resource.save();
+    await resource.deleteOne();
 
     await logAuditEvent({
       userId: req.user._id,
@@ -219,7 +294,7 @@ export async function deleteResource(req, res, next) {
       action: "DELETE",
       resourceType: "Resource",
       resourceId: resource._id,
-      details: `Deleted/archived resource '${resource.title}'`,
+      details: `Deleted resource '${resource.title}'${resource.originalName ? ` (${resource.originalName})` : ""}`,
     });
 
     res.json({
@@ -240,7 +315,7 @@ export async function trackDownload(req, res, next) {
   try {
     const resource = await Resource.findByIdAndUpdate(
       req.params.id,
-      { $inc: { downloadCount: 1 } },
+      { $inc: { downloadsCount: 1 } },
       { new: true }
     );
 
@@ -250,7 +325,7 @@ export async function trackDownload(req, res, next) {
 
     res.json({
       success: true,
-      downloadCount: resource.downloadCount,
+      downloadsCount: resource.downloadsCount,
     });
   } catch (error) {
     next(error);

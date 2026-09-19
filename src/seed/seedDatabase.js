@@ -1,4 +1,6 @@
 import mongoose from "mongoose";
+import fs from "fs";
+import path from "path";
 import { connectDB } from "../config/db.js";
 import { User } from "../models/User.js";
 import { Department } from "../models/Department.js";
@@ -211,6 +213,23 @@ async function seedDatabase() {
     const teacherCse = users.find((u) => u.staffId === "VCET-FAC-CSE-104");
 
     console.log("📄 Seeding Department Resources...");
+
+    // Ensure sample resource files exist on the server folder so downloads work.
+    const resourceDir = path.join(process.cwd(), "uploads", "resources");
+    const sampleFiles = {
+      "cse_toc_unit1_notes.pdf":
+        "TechVerse - TOC Unit 1: Finite Automata (institutional seed sample)",
+      "cse_networks_lab_manual.pdf":
+        "TechVerse - CS3591 Computer Networks Lab Manual (institutional seed sample)",
+    };
+    for (const [name, text] of Object.entries(sampleFiles)) {
+      const filePath = path.join(resourceDir, name);
+      if (!fs.existsSync(filePath)) {
+        fs.mkdirSync(resourceDir, { recursive: true });
+        fs.writeFileSync(filePath, text, "utf8");
+      }
+    }
+
     await Resource.insertMany([
       {
         title: "Unit 1: Finite Automata & Regular Expressions Lecture Handout",
@@ -219,12 +238,15 @@ async function seedDatabase() {
         subjectId: subjectMap["CS3452"],
         classId: classMap["cse_3a"],
         type: "notes",
-        fileUrl: "https://vcet.ac.in/academic/cse/cs3452_unit1_notes.pdf",
+        fileUrl: "/uploads/resources/cse_toc_unit1_notes.pdf",
+        originalName: "cse_toc_unit1_notes.pdf",
+        mimeType: "application/pdf",
         fileSize: "3.2 MB",
         fileType: "application/pdf",
         unit: 1,
         tags: ["TOC", "DFA", "Automata", "Unit 1"],
-        downloadCount: 142,
+        downloadsCount: 142,
+        isPublished: true,
         uploadedBy: teacherCse._id,
         uploaderRole: "teacher",
       },
@@ -235,12 +257,15 @@ async function seedDatabase() {
         subjectId: subjectMap["CS3591"],
         classId: classMap["cse_3a"],
         type: "lab_manual",
-        fileUrl: "https://vcet.ac.in/academic/cse/cs3591_lab_manual.pdf",
+        fileUrl: "/uploads/resources/cse_networks_lab_manual.pdf",
+        originalName: "cse_networks_lab_manual.pdf",
+        mimeType: "application/pdf",
         fileSize: "4.8 MB",
         fileType: "application/pdf",
         unit: 2,
         tags: ["Networks", "Lab", "Socket Programming", "Wireshark"],
-        downloadCount: 215,
+        downloadsCount: 215,
+        isPublished: true,
         uploadedBy: teacherCse._id,
         uploaderRole: "teacher",
       },
@@ -313,6 +338,7 @@ async function seedDatabase() {
       passingPercentage: 75,
       certificateEnabled: true,
       isPublished: true,
+      departmentId: deptMap["CSE"],
       createdBy: adminUser._id,
     });
 
@@ -333,6 +359,7 @@ async function seedDatabase() {
       passingPercentage: 70,
       certificateEnabled: true,
       isPublished: true,
+      departmentId: deptMap["CSE"],
       createdBy: teacherCse._id,
     });
 
@@ -572,6 +599,7 @@ async function seedDatabase() {
       passingPercentage: 75,
       certificateEnabled: true,
       isPublished: true,
+      departmentId: deptMap["CSE"],
       createdBy: adminUser._id,
     });
 
@@ -592,6 +620,7 @@ async function seedDatabase() {
       passingPercentage: 75,
       certificateEnabled: true,
       isPublished: true,
+      departmentId: deptMap["CSE"],
       createdBy: adminUser._id,
     });
 
@@ -612,6 +641,7 @@ async function seedDatabase() {
       passingPercentage: 75,
       certificateEnabled: true,
       isPublished: true,
+      departmentId: deptMap["CSE"],
       createdBy: adminUser._id,
     });
 

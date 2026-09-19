@@ -61,3 +61,39 @@ export const upload = multer({
   storage: createDynamicStorage("resources"),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
 });
+
+const ALLOWED_RESOURCE_MIME = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "text/plain",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/x-rar-compressed",
+  "application/octet-stream",
+]);
+
+export const uploadResourceFile = multer({
+  storage: createDynamicStorage("resources"),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_RESOURCE_MIME.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          "Unsupported file type. Allowed: PDF, Word, PowerPoint, Excel, images, text, and zip archives."
+        ),
+        false
+      );
+    }
+  },
+});

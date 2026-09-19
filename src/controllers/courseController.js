@@ -122,6 +122,7 @@ export async function createCourse(req, res, next) {
       passingPercentage,
       certificateEnabled = true,
       thumbnailUrl,
+      departmentId,
     } = req.body;
 
     if (!title || !description) {
@@ -137,6 +138,10 @@ export async function createCourse(req, res, next) {
       finalThumbnail = req.file.filename;
       finalThumbnailUrl = `/uploads/courses/${req.file.filename}`;
     }
+
+    // Department isolation: teachers are locked to their assigned department;
+    // admins may target any department via body.
+    const finalDepartmentId = req.user.role === "teacher" ? req.user.departmentId : departmentId || null;
 
     const course = await Course.create({
       title,
@@ -154,6 +159,7 @@ export async function createCourse(req, res, next) {
       passingPercentage: passingPercentage ? Number(passingPercentage) : 75,
       certificateEnabled: certificateEnabled === "true" || certificateEnabled === true,
       isPublished: true,
+      departmentId: finalDepartmentId,
       createdBy: req.user._id,
     });
 

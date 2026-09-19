@@ -11,6 +11,7 @@ import {
 } from "../controllers/courseController.js";
 import { authenticate } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/roleMiddleware.js";
+import { checkCourseDepartment } from "../middleware/departmentMiddleware.js";
 import { uploadCourseThumbnail } from "../utils/fileUpload.js";
 
 const router = express.Router();
@@ -32,6 +33,7 @@ router.post(
   "/",
   authenticate,
   authorize("teacher", "admin"),
+  checkCourseDepartment,
   uploadCourseThumbnail.single("thumbnail"),
   createCourse
 );
@@ -40,6 +42,7 @@ router.put(
   "/:id",
   authenticate,
   authorize("teacher", "admin"),
+  checkCourseDepartment,
   uploadCourseThumbnail.single("thumbnail"),
   updateCourse
 );
@@ -48,6 +51,7 @@ router.delete(
   "/:id",
   authenticate,
   authorize("teacher", "admin"),
+  checkCourseDepartment,
   deleteCourse
 );
 
