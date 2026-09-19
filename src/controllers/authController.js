@@ -53,12 +53,24 @@ export async function login(req, res, next) {
       ];
     }
 
-    const user = await User.findOne(query).select("+password");
+    let user = await User.findOne(query).select("+password");
+
+    // Fallback: Check if user exists under another role or matching identifier
+    if (!user) {
+      user = await User.findOne({
+        $or: [
+          { registerNumber: cleanIdentifier.toUpperCase() },
+          { staffId: cleanIdentifier.toUpperCase() },
+          { username: cleanIdentifier.toLowerCase() },
+          { email: cleanIdentifier.toLowerCase() },
+        ],
+      }).select("+password");
+    }
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: `Invalid credentials for ${role} portal.`,
+        message: `Invalid credentials. Please check your username/ID and password.`,
         code: "INVALID_CREDENTIALS",
       });
     }

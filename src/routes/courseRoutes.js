@@ -8,6 +8,10 @@ import {
   enrollInCourse,
   completeModule,
   getMyEnrollments,
+  recordVideoProgressHandler,
+  getModuleProgressionHandler,
+  getCourseProgressionHandler,
+  submitModuleTestHandler,
 } from "../controllers/courseController.js";
 import { authenticate } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/roleMiddleware.js";
@@ -26,7 +30,12 @@ const optionalAuth = (req, res, next) => {
 
 router.get("/", optionalAuth, getCourses);
 router.get("/my/enrollments", authenticate, authorize("student"), getMyEnrollments);
+router.get("/:slug/progression", authenticate, getCourseProgressionHandler);
+router.get("/:slug/modules/:moduleId/progression", authenticate, getModuleProgressionHandler);
+router.post("/:slug/modules/:moduleId/video-progress", authenticate, recordVideoProgressHandler);
+router.post("/:slug/modules/:moduleId/submit-test", authenticate, submitModuleTestHandler);
 router.get("/:slug", optionalAuth, getCourseBySlug);
+
 
 router.post(
   "/",

@@ -6,18 +6,39 @@ import { generateCertificateNumber, generateVerificationCode } from "../utils/ge
 import { awardPoints } from "./pointsService.js";
 import { logAuditEvent } from "./auditService.js";
 
-export async function generateCourseCertificate(studentIdOrParams, courseIdParam) {
-  let studentId, courseId;
+export async function generateCourseCertificate(studentIdOrParams, courseIdParam, scoreParam) {
+  let studentId, courseId, customScore;
   if (typeof studentIdOrParams === "object" && studentIdOrParams !== null) {
     studentId = studentIdOrParams.studentId || studentIdOrParams.userId;
     courseId = studentIdOrParams.courseId;
+    customScore = studentIdOrParams.score;
   } else {
     studentId = studentIdOrParams;
     courseId = courseIdParam;
+    customScore = scoreParam;
   }
 
-  // 1. Check existing certificate
-  const existing = await Certificate.findOne({ studentId, courseId });
+  // 1. Resolve Course by _id or slug
+  let course = null;
+  if (courseId) {
+    if (String(courseId).match(/^[0-9a-fA-F]{24}$/)) {
+      course = await Course.findById(courseId);
+    }
+    if (!course) {
+      course = await Course.findOne({ slug: courseId });
+    }
+  }
+
+  const student = await User.findById(studentId);
+
+  if (!course || !student) {
+    throw new Error("Course or Student record not found in MongoDB.");
+  }
+
+  const resolvedCourseId = course._id;
+
+  // 2. Check existing certificate in MongoDB
+  const existing = await Certificate.findOne({ studentId, courseId: resolvedCourseId });
   if (existing) {
     return {
       certificate: existing,
@@ -25,29 +46,35 @@ export async function generateCourseCertificate(studentIdOrParams, courseIdParam
     };
   }
 
-  // 2. Validate course and student
-  const [course, student, enrollment] = await Promise.all([
-    Course.findById(courseId),
-    User.findById(studentId),
-    Enrollment.findOne({ studentId, courseId }),
-  ]);
-
-  if (!course || !student) {
-    throw new Error("Course or Student record not found.");
+  // 3. Mark or create enrollment as completed in MongoDB
+  let enrollment = await Enrollment.findOne({ studentId, courseId: resolvedCourseId });
+  if (enrollment) {
+    enrollment.status = "completed";
+    enrollment.progressPercentage = 100;
+    enrollment.completedAt = enrollment.completedAt || new Date();
+    await enrollment.save();
+  } else {
+    await Enrollment.create({
+      studentId,
+      courseId: resolvedCourseId,
+      status: "completed",
+      progressPercentage: 100,
+      completedAt: new Date(),
+    });
   }
 
-  // 3. Generate serial
+  // 4. Generate serial number & verification hash
   const totalCerts = await Certificate.countDocuments();
   const certNumber = generateCertificateNumber(course.slug || "CRS", totalCerts + 1);
   const verCode = generateVerificationCode();
 
-  const score = 88;
+  const score = Number(customScore) > 0 ? Math.round(Number(customScore)) : 92;
   const grade = score >= 90 ? "Outstanding" : score >= 75 ? "Distinction" : "First Class";
 
   const cert = await Certificate.create({
     certificateNumber: certNumber,
     studentId,
-    courseId,
+    courseId: resolvedCourseId,
     studentName: student.name,
     registerNumber: student.registerNumber || "VCET-STU",
     courseName: course.title,

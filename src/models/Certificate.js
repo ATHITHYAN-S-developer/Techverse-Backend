@@ -22,6 +22,26 @@ const certificateSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    type: {
+      type: String,
+      enum: ["module_appreciation", "course_completion"],
+      default: "module_appreciation",
+      index: true,
+    },
+    moduleId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CourseModule",
+      default: null,
+      index: true,
+    },
+    moduleNumber: {
+      type: Number,
+      default: null,
+    },
+    moduleTitle: {
+      type: String,
+      default: "",
+    },
     studentName: {
       type: String,
       required: true,

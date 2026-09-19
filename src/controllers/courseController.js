@@ -1,10 +1,19 @@
 import { Course } from "../models/Course.js";
 import { CourseModule } from "../models/CourseModule.js";
 import { Enrollment } from "../models/Enrollment.js";
+import { ModuleProgress } from "../models/ModuleProgress.js";
+import { Certificate } from "../models/Certificate.js";
 import { awardPoints } from "../services/pointsService.js";
 import { updateStreakOnActivity } from "../services/streakService.js";
 import { issueCertificate } from "../services/certificateService.js";
 import { logAuditEvent } from "../services/auditService.js";
+import {
+  recordVideoWatchProgress,
+  getCourseProgressionMap,
+  submitModuleTest as gradeAndSubmitModuleTest,
+  getOrCreateModuleProgress,
+} from "../services/moduleProgressionService.js";
+
 
 /**
  * @route   GET /api/courses
@@ -102,10 +111,61 @@ export async function getCourseBySlug(req, res, next) {
 
     const completedModuleIds = (enrollment?.completedModules || []).map((id) => id.toString());
 
+    let moduleProgressMap = new Map();
+    let certMap = new Map();
+
+    if (req.user) {
+      const progresses = await ModuleProgress.find({ studentId: req.user._id, courseId: course._id });
+      progresses.forEach((p) => moduleProgressMap.set(p.moduleId.toString(), p));
+
+      const certs = await Certificate.find({ studentId: req.user._id, courseId: course._id });
+      certs.forEach((c) => {
+        if (c.moduleId) certMap.set(c.moduleId.toString(), c);
+      });
+    }
+
+    // Check if student has already completed the course
+    const passedModulesCount = Array.from(moduleProgressMap.values()).filter((p) => p.testPassed).length;
+    const isCourseCompleted =
+      (enrollment && (enrollment.status === "completed" || enrollment.progressPercentage >= 100)) ||
+      (modules.length > 0 && passedModulesCount >= modules.length) ||
+      (modules.length > 0 && completedModuleIds.length >= modules.length);
+
+    let previousCompleted = true; // Module 1 starts accessible
     const isPrivileged = req.user && (req.user.role === "admin" || req.user.role === "teacher");
-    const sanitizedModules = modules.map((mod) => {
+
+    const sanitizedModules = modules.map((mod, idx) => {
       const obj = mod.toObject();
-      obj.completed = completedModuleIds.includes(obj._id.toString());
+      const mIdStr = obj._id.toString();
+      const p = moduleProgressMap.get(mIdStr);
+      const cert = certMap.get(mIdStr);
+
+      const isPassed = completedModuleIds.includes(mIdStr) || Boolean(p?.testPassed);
+      const isUnlocked = isPrivileged || isCourseCompleted || previousCompleted;
+
+      // Update flag for subsequent modules (strictly sequential)
+      previousCompleted = isPassed;
+
+      obj.completed = isPassed;
+      obj.isUnlocked = isUnlocked;
+      obj.watchPercentage = p?.watchPercentage || (isCourseCompleted ? 100 : 0);
+      obj.uniqueWatchedSeconds = p?.uniqueWatchedSeconds || 0;
+      obj.videoRequirementMet = isCourseCompleted || Boolean(p?.videoRequirementMet);
+      obj.testUnlocked = isCourseCompleted || isPrivileged || (isUnlocked && Boolean(p?.testUnlocked && p?.videoRequirementMet));
+      obj.testScore = p?.testScore ?? null;
+      obj.testPassed = isPassed;
+      obj.status = p?.status || (isPassed ? "module_completed" : isUnlocked ? "video_in_progress" : "video_locked");
+
+      if (cert) {
+        obj.certificate = {
+          id: cert._id,
+          certificateNumber: cert.certificateNumber,
+          score: cert.score,
+          issuedAt: cert.issuedAt,
+          verificationCode: cert.verificationCode,
+        };
+      }
+
       if (!isPrivileged && obj.mcqs) {
         obj.mcqs = obj.mcqs.map((q) => {
           const { correctAnswer, explanation, ...rest } = q;
@@ -117,7 +177,10 @@ export async function getCourseBySlug(req, res, next) {
 
     const cObj = course.toObject();
     cObj.totalModules = modules.length;
-    cObj.progress = enrollment ? enrollment.progressPercentage : 0;
+    const completedCount = sanitizedModules.filter((m) => m.completed).length;
+    const calculatedProgress = modules.length > 0 ? Math.round((completedCount / modules.length) * 100) : 0;
+    cObj.progress = enrollment ? Math.max(enrollment.progressPercentage, calculatedProgress) : calculatedProgress;
+    cObj.isCourseCompleted = isCourseCompleted || cObj.progress >= 100;
 
     res.json({
       success: true,
@@ -129,6 +192,7 @@ export async function getCourseBySlug(req, res, next) {
     next(error);
   }
 }
+
 
 /**
  * @route   POST /api/courses
@@ -334,13 +398,27 @@ export async function enrollInCourse(req, res, next) {
  */
 export async function completeModule(req, res, next) {
   try {
-    const courseId = req.params.id;
+    const rawCourseId = req.params.id;
     const { moduleId } = req.body;
     const studentId = req.user._id;
 
     if (!moduleId) {
       return res.status(400).json({ success: false, message: "moduleId is required." });
     }
+
+    // Resolve course slug or _id to actual Course document
+    const courseDoc = await Course.findOne({
+      $or: [
+        { slug: rawCourseId },
+        { _id: rawCourseId.match(/^[0-9a-fA-F]{24}$/) ? rawCourseId : null },
+      ].filter(Boolean),
+    });
+
+    if (!courseDoc) {
+      return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    const courseId = courseDoc._id;
 
     let enrollment = await Enrollment.findOne({ studentId, courseId });
     if (!enrollment) {
@@ -430,3 +508,143 @@ export async function getMyEnrollments(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * @route   POST /api/courses/:slug/modules/:moduleId/video-progress
+ * @desc    Record 5-second unique video segments and compute watch percentage
+ * @access  Protected (Student / Authenticated)
+ */
+export async function recordVideoProgressHandler(req, res, next) {
+  try {
+    const { slug, moduleId } = req.params;
+    const studentId = req.user._id;
+
+    const course = await Course.findOne({
+      $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
+    });
+
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    const result = await recordVideoWatchProgress(studentId, course._id, moduleId, req.body);
+    res.json(result);
+  } catch (error) {
+    if (error.status === 403) {
+      return res.status(403).json({ success: false, message: error.message, code: error.code || "FORBIDDEN" });
+    }
+    next(error);
+  }
+}
+
+/**
+ * @route   GET /api/courses/:slug/modules/:moduleId/progression
+ * @desc    Get progression details for a specific module
+ * @access  Protected (Student / Authenticated)
+ */
+export async function getModuleProgressionHandler(req, res, next) {
+  try {
+    const { slug, moduleId } = req.params;
+    const studentId = req.user._id;
+
+    const course = await Course.findOne({
+      $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
+    });
+
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    const { progress, moduleDoc, isUnlocked, isCourseDone } = await getOrCreateModuleProgress(studentId, course._id, moduleId);
+    const cert = await Certificate.findOne({ studentId, courseId: course._id, moduleId: moduleDoc._id });
+    const isPrivileged = req.user.role === "admin" || req.user.role === "teacher";
+    const testUnlocked = isCourseDone || isPrivileged || (isUnlocked && Boolean(progress.testUnlocked && progress.videoRequirementMet));
+
+    res.json({
+      success: true,
+      moduleId: moduleDoc._id,
+      moduleNumber: moduleDoc.moduleNumber,
+      title: moduleDoc.title,
+      isUnlocked,
+      status: progress.status,
+      watchPercentage: progress.watchPercentage,
+      uniqueWatchedSeconds: progress.uniqueWatchedSeconds,
+      videoDurationSeconds: progress.videoDurationSeconds,
+      videoRequirementMet: progress.videoRequirementMet,
+      testUnlocked,
+      testScore: progress.testScore,
+      testPassed: progress.testPassed,
+      testAttemptsCount: progress.testAttemptsCount,
+      certificate: cert ? {
+        id: cert._id,
+        certificateNumber: cert.certificateNumber,
+        score: cert.score,
+        issuedAt: cert.issuedAt,
+        verificationCode: cert.verificationCode,
+      } : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   GET /api/courses/:slug/progression
+ * @desc    Get full course progression map for authenticated student
+ * @access  Protected (Student / Authenticated)
+ */
+export async function getCourseProgressionHandler(req, res, next) {
+  try {
+    const { slug } = req.params;
+    const studentId = req.user._id;
+
+    const course = await Course.findOne({
+      $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
+    });
+
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    const progressionMap = await getCourseProgressionMap(studentId, course._id);
+    res.json({
+      success: true,
+      ...progressionMap,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   POST /api/courses/:slug/modules/:moduleId/submit-test
+ * @desc    Submit module test, grade securely on server, issue Appreciation Certificate if score >= 50%
+ * @access  Protected (Student / Authenticated)
+ */
+export async function submitModuleTestHandler(req, res, next) {
+  try {
+    const { slug, moduleId } = req.params;
+    const studentId = req.user._id;
+
+    const course = await Course.findOne({
+      $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
+    });
+
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    const result = await gradeAndSubmitModuleTest(studentId, course._id, moduleId, req.body);
+    res.json(result);
+  } catch (error) {
+    if (error.status === 403) {
+      return res.status(403).json({
+        success: false,
+        message: error.message,
+        code: error.code || "FORBIDDEN",
+      });
+    }
+    next(error);
+  }
+}
+

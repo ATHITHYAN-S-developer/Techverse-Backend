@@ -69,14 +69,14 @@ export async function verifyCertificate(req, res, next) {
  */
 export async function claimCertificate(req, res, next) {
   try {
-    const { courseId } = req.body;
+    const { courseId, score } = req.body;
     const studentId = req.user._id;
 
     if (!courseId) {
       return res.status(400).json({ success: false, message: "courseId is required." });
     }
 
-    const result = await generateCourseCertificate(studentId, courseId);
+    const result = await generateCourseCertificate({ studentId, courseId, score });
 
     res.json({
       success: true,
