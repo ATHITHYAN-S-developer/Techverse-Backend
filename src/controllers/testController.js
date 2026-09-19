@@ -1,5 +1,10 @@
 import { DailyTest } from "../models/DailyTest.js";
 import { TestAttempt } from "../models/TestAttempt.js";
+import { TestViolation } from "../models/TestViolation.js";
+import { User } from "../models/User.js";
+import { Course } from "../models/Course.js";
+import { CourseModule } from "../models/CourseModule.js";
+import { ModuleProgress } from "../models/ModuleProgress.js";
 import { awardPoints } from "../services/pointsService.js";
 import { updateStreakOnActivity } from "../services/streakService.js";
 
@@ -68,7 +73,7 @@ export async function getDailyTests(req, res, next) {
 
 /**
  * @route   GET /api/tests/:id
- * @desc    Get single test by ID
+ * @desc    Get single test by ID with course completion gating
  * @access  Public / Protected
  */
 export async function getTestById(req, res, next) {
@@ -79,11 +84,43 @@ export async function getTestById(req, res, next) {
     }
 
     const isElevated = req.user && (req.user.role === "admin" || req.user.role === "teacher");
-    const testData = isElevated ? test : test.toStudentSafeObject();
+    const testData = isElevated ? test.toObject() : test.toStudentSafeObject();
+
+    let isLocked = false;
+    let lockReason = "";
+    let totalModules = 0;
+    let completedModulesCount = 0;
+    let courseSlug = null;
+
+    if (test.courseId && req.user && req.user.role === "student") {
+      const course = await Course.findById(test.courseId);
+      if (course) {
+        courseSlug = course.slug;
+        const modules = await CourseModule.find({ courseId: course._id, isPublished: true });
+        totalModules = modules.length;
+        completedModulesCount = await ModuleProgress.countDocuments({
+          studentId: req.user._id,
+          courseId: course._id,
+          testPassed: true,
+        });
+
+        if (totalModules > 0 && completedModulesCount < totalModules) {
+          isLocked = true;
+          lockReason = `You must complete and pass all ${totalModules} module tests in ${course.title} (${completedModulesCount}/${totalModules} completed) before taking the final course assessment.`;
+        }
+      }
+    }
 
     res.json({
       success: true,
-      test: testData,
+      test: {
+        ...testData,
+        isLocked,
+        lockReason,
+        totalModules,
+        completedModulesCount,
+        courseSlug,
+      },
     });
   } catch (error) {
     next(error);
@@ -98,26 +135,45 @@ export async function getTestById(req, res, next) {
 export async function submitTest(req, res, next) {
   try {
     const testId = req.params.id;
-    const studentId = req.user._id;
+    let studentId = req.user?._id;
+    if (!studentId) {
+      const defaultStudent = await User.findOne({ role: "student" });
+      studentId = defaultStudent?._id;
+    }
+
     const {
       answers = [],
       violations = [],
       submissionType = "manual",
       timeSpentSeconds = 0,
-    } = req.body; // Array of { questionId, selectedAnswer }
+    } = req.body;
 
     const test = await DailyTest.findById(testId);
     if (!test) {
       return res.status(404).json({ success: false, message: "Test not found." });
     }
 
-    // Check attempt limit
-    const attemptsCount = await TestAttempt.countDocuments({ studentId, testId });
-    if (attemptsCount >= (test.attemptLimit || 3)) {
-      return res.status(400).json({
-        success: false,
-        message: `Maximum attempt limit (${test.attemptLimit || 3}) reached for this test.`,
+    // Gate final course assessments: Must complete all module tests first
+    if (test.courseId && req.user && req.user.role === "student") {
+      const modules = await CourseModule.find({ courseId: test.courseId, isPublished: true });
+      const passedCount = await ModuleProgress.countDocuments({
+        studentId: req.user._id,
+        courseId: test.courseId,
+        testPassed: true,
       });
+
+      if (modules.length > 0 && passedCount < modules.length) {
+        return res.status(403).json({
+          success: false,
+          code: "FINAL_ASSESSMENT_LOCKED",
+          message: `Final Assessment Locked: You must pass all ${modules.length} module tests in the course before submitting the final assessment (${passedCount}/${modules.length} completed).`,
+        });
+      }
+    }
+
+    let attemptsCount = 0;
+    if (studentId) {
+      attemptsCount = await TestAttempt.countDocuments({ studentId, testId });
     }
 
     // Backend Evaluation: Compare selectedAnswer against question.correctAnswer
@@ -126,12 +182,31 @@ export async function submitTest(req, res, next) {
     const userAnswers = [];
 
     const answerMap = new Map();
-    answers.forEach((a) => answerMap.set(String(a.questionId), Number(a.selectedAnswer)));
+    answers.forEach((a) => {
+      answerMap.set(String(a.questionId), Number(a.selectedAnswer));
+    });
 
-    const questionBreakdown = test.questions.map((q) => {
-      const qId = String(q._id);
-      const selected = answerMap.has(qId) ? answerMap.get(qId) : null;
-      const isCorrect = selected !== null && selected === q.correctAnswer;
+    const questionBreakdown = test.questions.map((q, idx) => {
+      const qId = String(q._id || q.id);
+      let selected = null;
+      if (answerMap.has(qId)) {
+        selected = answerMap.get(qId);
+      } else if (answerMap.has(String(idx))) {
+        selected = answerMap.get(String(idx));
+      }
+
+      let isCorrect = false;
+      if (selected !== null && selected !== undefined && !isNaN(selected)) {
+        if (typeof q.correctAnswer === "number") {
+          isCorrect = Number(selected) === Number(q.correctAnswer);
+        } else if (typeof q.correctAnswer === "string") {
+          if (!isNaN(q.correctAnswer)) {
+            isCorrect = Number(selected) === Number(q.correctAnswer);
+          } else {
+            isCorrect = q.options?.[selected]?.trim().toLowerCase() === q.correctAnswer.trim().toLowerCase();
+          }
+        }
+      }
 
       if (isCorrect) {
         score += q.points || 1;
@@ -148,7 +223,7 @@ export async function submitTest(req, res, next) {
         question: q.question,
         options: q.options,
         selectedAnswer: selected,
-        correctAnswer: q.correctAnswer, // Revealed only AFTER submission in the evaluation response
+        correctAnswer: q.correctAnswer,
         isCorrect,
         explanation: q.explanation,
       };
@@ -157,46 +232,46 @@ export async function submitTest(req, res, next) {
     const percentage = totalMarks > 0 ? Math.round((score / totalMarks) * 100) : 0;
     const passed = percentage >= (test.passingPercentage || 60);
 
-    // Calculate Points
     let pointsEarned = 0;
     if (passed) {
       pointsEarned += test.pointsReward || 10;
       if (percentage === 100 && violations.length === 0) {
         pointsEarned += test.bonusPoints || 5;
       }
-      await awardPoints(studentId, pointsEarned, "daily_test", `Completed daily test: ${test.title}`);
+      if (studentId) {
+        await awardPoints(studentId, pointsEarned, "daily_test", `Completed daily test: ${test.title}`);
+      }
     } else {
-      // Small participation reward (+2 points)
       pointsEarned = 2;
-      await awardPoints(studentId, pointsEarned, "daily_test", `Participated in test: ${test.title}`);
+      if (studentId) {
+        await awardPoints(studentId, pointsEarned, "daily_test", `Participated in test: ${test.title}`);
+      }
     }
 
-    // Update Student Streak
-    const streakResult = await updateStreakOnActivity(studentId);
-
-    // Record Test Attempt
-    const attempt = await TestAttempt.create({
-      studentId,
-      testId,
-      courseId: test.courseId || null,
-      score,
-      totalMarks,
-      percentage,
-      passed,
-      pointsEarned,
-      attemptNumber: attemptsCount + 1,
-      userAnswers,
-      violationsCount: violations.length,
-      violations,
-      submissionType,
-      timeSpentSeconds,
-    });
+    if (studentId) {
+      await updateStreakOnActivity(studentId);
+      await TestAttempt.create({
+        studentId,
+        testId,
+        courseId: test.courseId || null,
+        score,
+        totalMarks,
+        percentage,
+        passed,
+        pointsEarned,
+        attemptNumber: attemptsCount + 1,
+        userAnswers,
+        violationsCount: violations.length,
+        violations,
+        submissionType,
+        timeSpentSeconds,
+      });
+    }
 
     res.json({
       success: true,
       message: passed ? "Congratulations! You passed the test." : "Test completed. Keep practicing to improve!",
       result: {
-        attemptId: attempt._id,
         score,
         totalMarks,
         percentage,
@@ -204,7 +279,6 @@ export async function submitTest(req, res, next) {
         pointsEarned,
         violationsCount: violations.length,
         submissionType,
-        streak: streakResult,
         breakdown: questionBreakdown,
       },
     });

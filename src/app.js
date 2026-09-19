@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 // Middlewares
@@ -24,6 +25,7 @@ import analyticsRoutes from "./routes/analyticsRoutes.js";
 import visitorRoutes from "./routes/visitorRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import trainingRoutes from "./routes/trainingRoutes.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,9 +77,27 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/visitors", visitorRoutes);
 app.use("/api/audit-logs", auditRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/training", trainingRoutes);
+
+// Serve Frontend Static Bundle for Combined Single Link Access
+const frontendDistPaths = [
+  path.resolve(__dirname, "../../frontend/dist"),
+  path.resolve(process.cwd(), "frontend/dist"),
+  path.resolve(process.cwd(), "../frontend/dist"),
+];
+const distPath = frontendDistPaths.find((p) => fs.existsSync(p));
+
+if (distPath) {
+  app.use(express.static(distPath));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
 
 // 404 & Error Handlers
 app.use(notFoundHandler);
 app.use(errorHandler);
 
 export default app;
+

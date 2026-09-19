@@ -116,6 +116,10 @@ const mcqSchema = new mongoose.Schema(
       required: [true, "Correct answer index is required"],
       default: 0,
     },
+    correctAnswerText: {
+      type: String,
+      default: "",
+    },
     explanation: {
       type: String,
       default: "",

@@ -20,6 +20,7 @@ const pointSchema = new mongoose.Schema(
         "streak_14",
         "streak_30",
         "perfect_score",
+        "module_completion",
         "course_completion",
         "coding_challenge",
         "bonus",

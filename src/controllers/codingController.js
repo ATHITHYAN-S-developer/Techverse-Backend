@@ -287,3 +287,276 @@ export async function recordCodingViolation(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * @route   GET /api/coding/admin/all
+ * @desc    Get all coding tests with hidden test cases (Teacher / Admin only)
+ * @access  Private (Teacher, Faculty, Admin)
+ */
+export async function getAllCodingTestsAdmin(req, res, next) {
+  try {
+    const tests = await CodingTest.find().sort({ createdAt: -1 });
+    res.json({
+      success: true,
+      count: tests.length,
+      codingTests: tests,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   POST /api/coding
+ * @desc    Create a new coding test / assessment with problems
+ * @access  Private (Teacher, Faculty, Admin)
+ */
+export async function createCodingTest(req, res, next) {
+  try {
+    const {
+      title,
+      slug,
+      description = "",
+      category = "Placement",
+      difficulty = "Medium",
+      timeLimit = 45,
+      memoryLimit = 256,
+      languages = ["python", "javascript", "cpp", "java", "c"],
+      problems = [],
+      settings = {},
+      pointsReward = 50,
+      bonusPoints = 25,
+      isPublished = true,
+    } = req.body;
+
+    if (!title) {
+      return res.status(400).json({
+        success: false,
+        message: "Assessment title is required.",
+      });
+    }
+
+    const generatedSlug = slug || title.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now();
+
+    const newTest = await CodingTest.create({
+      title,
+      slug: generatedSlug,
+      description,
+      category,
+      difficulty,
+      timeLimit,
+      memoryLimit,
+      languages,
+      problems,
+      settings: {
+        fullscreenRequired: settings.fullscreenRequired !== false,
+        antiCopy: settings.antiCopy !== false,
+        antiPaste: settings.antiPaste !== false,
+        maxViolations: settings.maxViolations || 3,
+        autoSubmitOnViolation: settings.autoSubmitOnViolation !== false,
+      },
+      pointsReward,
+      bonusPoints,
+      isPublished,
+      createdBy: req.user?._id,
+    });
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userRole: req.user.role,
+      action: "CREATE_CODING_TEST",
+      resourceType: "CodingTest",
+      resourceId: newTest._id,
+      details: { title: newTest.title, problemsCount: problems.length },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Coding test assessment created successfully.",
+      codingTest: newTest,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   PUT /api/coding/:id
+ * @desc    Update an existing coding test
+ * @access  Private (Teacher, Faculty, Admin)
+ */
+export async function updateCodingTest(req, res, next) {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    const test = await CodingTest.findByIdAndUpdate(id, updates, {
+      new: true,
+      runValidators: true,
+    });
+
+    if (!test) {
+      return res.status(404).json({
+        success: false,
+        message: "Coding test not found.",
+      });
+    }
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userRole: req.user.role,
+      action: "UPDATE_CODING_TEST",
+      resourceType: "CodingTest",
+      resourceId: test._id,
+      details: { title: test.title },
+    });
+
+    res.json({
+      success: true,
+      message: "Coding test updated successfully.",
+      codingTest: test,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   DELETE /api/coding/:id
+ * @desc    Delete a coding test
+ * @access  Private (Teacher, Faculty, Admin)
+ */
+export async function deleteCodingTest(req, res, next) {
+  try {
+    const { id } = req.params;
+    const test = await CodingTest.findByIdAndDelete(id);
+
+    if (!test) {
+      return res.status(404).json({
+        success: false,
+        message: "Coding test not found.",
+      });
+    }
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userRole: req.user.role,
+      action: "DELETE_CODING_TEST",
+      resourceType: "CodingTest",
+      resourceId: id,
+      details: { title: test.title },
+    });
+
+    res.json({
+      success: true,
+      message: "Coding test deleted successfully.",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   POST /api/coding/:id/problems
+ * @desc    Add a new coding problem to a test
+ * @access  Private (Teacher, Faculty, Admin)
+ */
+export async function addProblemToTest(req, res, next) {
+  try {
+    const { id } = req.params;
+    const problemData = req.body;
+
+    const test = await CodingTest.findById(id);
+    if (!test) {
+      return res.status(404).json({
+        success: false,
+        message: "Coding test not found.",
+      });
+    }
+
+    test.problems.push(problemData);
+    await test.save();
+
+    const addedProblem = test.problems[test.problems.length - 1];
+
+    res.status(201).json({
+      success: true,
+      message: "Coding problem added successfully.",
+      problem: addedProblem,
+      codingTest: test,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   PUT /api/coding/:id/problems/:problemId
+ * @desc    Update a problem inside a test
+ * @access  Private (Teacher, Faculty, Admin)
+ */
+export async function updateProblemInTest(req, res, next) {
+  try {
+    const { id, problemId } = req.params;
+    const updates = req.body;
+
+    const test = await CodingTest.findById(id);
+    if (!test) {
+      return res.status(404).json({
+        success: false,
+        message: "Coding test not found.",
+      });
+    }
+
+    const problem = test.problems.id(problemId);
+    if (!problem) {
+      return res.status(404).json({
+        success: false,
+        message: "Problem not found in this test.",
+      });
+    }
+
+    Object.assign(problem, updates);
+    await test.save();
+
+    res.json({
+      success: true,
+      message: "Problem updated successfully.",
+      problem,
+      codingTest: test,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   DELETE /api/coding/:id/problems/:problemId
+ * @desc    Delete a problem from a test
+ * @access  Private (Teacher, Faculty, Admin)
+ */
+export async function deleteProblemFromTest(req, res, next) {
+  try {
+    const { id, problemId } = req.params;
+
+    const test = await CodingTest.findById(id);
+    if (!test) {
+      return res.status(404).json({
+        success: false,
+        message: "Coding test not found.",
+      });
+    }
+
+    test.problems.pull(problemId);
+    await test.save();
+
+    res.json({
+      success: true,
+      message: "Problem removed from test successfully.",
+      codingTest: test,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
