@@ -192,6 +192,73 @@ export async function checkCourseDepartment(req, res, next) {
 }
 
 /**
+ * Ensures teachers can only create, edit, or delete modules for courses
+ * assigned to or created by themselves. Admin has college-wide authority.
+ */
+export async function checkModuleCourseOwnership(req, res, next) {
+  try {
+    if (req.user?.role === "admin") {
+      return next();
+    }
+
+    if (req.user?.role !== "teacher") {
+      return res.status(403).json({
+        success: false,
+        message: "Only faculty or administrators can modify course modules.",
+        code: "ROLE_UNAUTHORIZED",
+      });
+    }
+
+    // Resolve the module's course (from body on creation, from DB on modification)
+    let courseId = req.body?.courseId ? req.body.courseId.toString() : null;
+    if (req.params?.id && !courseId) {
+      const existingModule = await CourseModule.findById(req.params.id);
+      if (!existingModule) {
+        return res.status(404).json({
+          success: false,
+          message: "Module not found.",
+          code: "MODULE_NOT_FOUND",
+        });
+      }
+      courseId = existingModule.courseId ? existingModule.courseId.toString() : null;
+    }
+
+    if (!courseId) {
+      return res.status(400).json({
+        success: false,
+        message: "A courseId is required to create a module.",
+        code: "COURSE_ID_REQUIRED",
+      });
+    }
+
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found.",
+        code: "COURSE_NOT_FOUND",
+      });
+    }
+
+    const isOwner =
+      (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
+      (course.createdBy && course.createdBy.toString() === req.user._id.toString());
+
+    if (!isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only manage modules for courses assigned to or created by yourself.",
+        code: "COURSE_OWNERSHIP_DENIED",
+      });
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Ensures teachers can only create, edit, or delete modules belonging
  * to courses within their assigned department.
  * Admin has college-wide authority.
