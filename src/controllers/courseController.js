@@ -18,6 +18,19 @@ import {
 
 
 /**
+ * Remove internal ownership fields from a course object before it is exposed
+ * to non-privileged users (students / anonymous site visitors).
+ */
+function stripInternalCourseFields(courseObj) {
+  const sanitized = { ...courseObj };
+  delete sanitized.createdBy;
+  delete sanitized.assignedFacultyId;
+  delete sanitized.assignedFacultyName;
+  delete sanitized.departmentId;
+  return sanitized;
+}
+
+/**
  * @route   GET /api/courses
  * @desc    Get all published courses (with optional user enrollment progress)
  * @access  Public / Protected
@@ -64,8 +77,10 @@ export async function getCourses(req, res, next) {
       });
     }
 
+    const isPrivileged = req.user && (req.user.role === "admin" || req.user.role === "teacher");
+
     const coursesWithEnrollment = courses.map((c) => {
-      const cObj = c.toObject();
+      const cObj = isPrivileged ? c.toObject() : stripInternalCourseFields(c.toObject());
       const realModuleCount = moduleCountMap[c._id.toString()] || cObj.totalModules || 0;
       const enrollment = userEnrollmentsMap[c._id.toString()] || null;
       const progress = enrollment ? enrollment.progressPercentage : 0;
@@ -98,7 +113,7 @@ export async function getMyCourses(req, res, next) {
     const { category, search } = req.query;
     const query = {
       isPublished: true,
-      assignedFacultyId: req.user._id,
+      $or: [{ assignedFacultyId: req.user._id }, { createdBy: req.user._id }],
     };
 
     if (category && category !== "All") {
@@ -157,7 +172,7 @@ export async function getCourseBySlug(req, res, next) {
       $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
     });
 
-    if (!course) {
+    if (!course || !course.isPublished) {
       return res.status(404).json({ success: false, message: "Course not found." });
     }
 
@@ -234,7 +249,7 @@ export async function getCourseBySlug(req, res, next) {
       return obj;
     });
 
-    const cObj = course.toObject();
+    const cObj = isPrivileged ? course.toObject() : stripInternalCourseFields(course.toObject());
     cObj.totalModules = modules.length;
     const completedCount = sanitizedModules.filter((m) => m.completed).length;
     const calculatedProgress = modules.length > 0 ? Math.round((completedCount / modules.length) * 100) : 0;
@@ -313,7 +328,13 @@ export async function createCourse(req, res, next) {
       assignedFacultyName = facultyUser.name;
     }
 
-    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const baseSlug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    let slug = baseSlug;
+    let slugCounter = 2;
+    while (await Course.exists({ slug })) {
+      slug = `${baseSlug}-${slugCounter}`;
+      slugCounter += 1;
+    }
 
     let finalThumbnail = "";
     let finalThumbnailUrl = thumbnailUrl || "";
@@ -390,10 +411,13 @@ export async function updateCourse(req, res, next) {
 
     const updates = { ...req.body };
 
+    // Slug is immutable once a course is created — keeps course URLs stable.
+    delete updates.slug;
+    delete updates.assignedFacultyName;
+
     if (req.user.role === "teacher") {
       // Teachers cannot reassign faculty
       delete updates.assignedFacultyId;
-      delete updates.assignedFacultyName;
     } else if (req.user.role === "admin" && updates.assignedFacultyId) {
       if (!mongoose.Types.ObjectId.isValid(updates.assignedFacultyId)) {
         return res.status(400).json({
@@ -495,7 +519,7 @@ export async function enrollInCourse(req, res, next) {
     const studentId = req.user._id;
 
     const course = await Course.findById(courseId);
-    if (!course) {
+    if (!course || !course.isPublished) {
       return res.status(404).json({ success: false, message: "Course not found." });
     }
 
