@@ -45,6 +45,7 @@ export async function login(req, res, next) {
       query.$or = [
         { staffId: cleanIdentifier.toUpperCase() },
         { email: cleanIdentifier.toLowerCase() },
+        { username: cleanIdentifier.toLowerCase() },
       ];
     } else if (role === "admin") {
       query.$or = [
