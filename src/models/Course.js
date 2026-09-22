@@ -82,6 +82,16 @@ const courseSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    assignedFacultyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      index: true,
+    },
+    assignedFacultyName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Department",
