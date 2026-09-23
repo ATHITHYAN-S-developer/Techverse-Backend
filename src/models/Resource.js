@@ -11,7 +11,8 @@ const resourceSchema = new mongoose.Schema(
     subjectId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Subject",
-      required: [true, "Subject reference is required"],
+      // Not required: platform-level resources (aptitude, updates, etc.)
+      // legitimately have no subject.
       index: true,
     },
     title: {
@@ -36,6 +37,10 @@ const resourceSchema = new mongoose.Schema(
         "project",
         "syllabus",
         "website",
+        "aptitude",
+        "updates",
+        "technology",
+        "youtube",
       ],
       default: "notes",
       index: true,

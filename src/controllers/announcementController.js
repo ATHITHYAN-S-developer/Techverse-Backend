@@ -27,7 +27,11 @@ export async function getAnnouncements(req, res, next) {
     const [announcements, total] = await Promise.all([
       Announcement.find(query)
         .populate("departmentId", "code name")
-        .populate("createdBy", "name staffId role username")
+        .populate({
+          path: "createdBy",
+          select: "name staffId role username email departmentId",
+          populate: { path: "departmentId", select: "code name" },
+        })
         .sort({ isPinned: -1, createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -58,7 +62,11 @@ export async function getAnnouncementById(req, res, next) {
   try {
     const announcement = await Announcement.findById(req.params.id)
       .populate("departmentId", "code name")
-      .populate("createdBy", "name staffId role username");
+      .populate({
+        path: "createdBy",
+        select: "name staffId role username email departmentId",
+        populate: { path: "departmentId", select: "code name" },
+      });
 
     if (!announcement || !announcement.isActive) {
       return res.status(404).json({ success: false, message: "Announcement not found." });
@@ -177,6 +185,12 @@ export async function updateAnnouncement(req, res, next) {
     }
 
     const updates = { ...req.body };
+    // Issuer identity always comes from the authenticated session — never trust the client.
+    delete updates.createdBy;
+    delete updates.authorName;
+    delete updates.authorRole;
+    delete updates._id;
+    delete updates.createdAt;
     if (updates.description) updates.content = updates.description;
     if (updates.content) updates.description = updates.content;
 
