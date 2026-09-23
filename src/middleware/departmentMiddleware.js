@@ -146,61 +146,22 @@ function resolveTeacherDepartment(req, res) {
 }
 
 /**
- * Ensures teachers can only create, edit, or delete courses
- * belonging strictly to their assigned department.
- * Admin has college-wide authority.
+ * Ensures teachers can only create, edit, or delete modules for courses
+ * assigned to or created by themselves. Admin has college-wide authority.
  */
-export async function checkCourseDepartment(req, res, next) {
+export async function checkModuleCourseOwnership(req, res, next) {
   try {
-    const result = resolveTeacherDepartment(req, res);
-    if (!result.passed) return;
-    if (result.teacherDeptId === undefined) return next(); // admin
+    if (req.user?.role === "admin") {
+      return next();
+    }
 
-    // Check on Creation: a client-supplied department must match the teacher's
-    const bodyDeptId = req.body?.departmentId ? req.body.departmentId.toString() : null;
-    if (bodyDeptId && bodyDeptId !== result.teacherDeptId) {
+    if (req.user?.role !== "teacher") {
       return res.status(403).json({
         success: false,
-        message: "Department Access Denied: Faculty cannot create courses for another department.",
-        code: "DEPARTMENT_ACCESS_DENIED",
+        message: "Only faculty or administrators can modify course modules.",
+        code: "ROLE_UNAUTHORIZED",
       });
     }
-
-    // Check on Modification (from database course lookup)
-    if (req.params?.id) {
-      const existing = await Course.findById(req.params.id);
-      if (!existing) {
-        return res.status(404).json({
-          success: false,
-          message: "Course not found.",
-          code: "COURSE_NOT_FOUND",
-        });
-      }
-      if (existing.departmentId && existing.departmentId.toString() !== result.teacherDeptId) {
-        return res.status(403).json({
-          success: false,
-          message: "Department Access Denied: You cannot modify a course belonging to another department.",
-          code: "DEPARTMENT_ACCESS_DENIED",
-        });
-      }
-    }
-
-    next();
-  } catch (error) {
-    next(error);
-  }
-}
-
-/**
- * Ensures teachers can only create, edit, or delete modules belonging
- * to courses within their assigned department.
- * Admin has college-wide authority.
- */
-export async function checkModuleDepartment(req, res, next) {
-  try {
-    const result = resolveTeacherDepartment(req, res);
-    if (!result.passed) return;
-    if (result.teacherDeptId === undefined) return next(); // admin
 
     // Resolve the module's course (from body on creation, from DB on modification)
     let courseId = req.body?.courseId ? req.body.courseId.toString() : null;
@@ -216,15 +177,33 @@ export async function checkModuleDepartment(req, res, next) {
       courseId = existingModule.courseId ? existingModule.courseId.toString() : null;
     }
 
-    if (courseId) {
-      const course = await Course.findById(courseId);
-      if (course && course.departmentId && course.departmentId.toString() !== result.teacherDeptId) {
-        return res.status(403).json({
-          success: false,
-          message: "Department Access Denied: You can only manage modules within your assigned department.",
-          code: "DEPARTMENT_ACCESS_DENIED",
-        });
-      }
+    if (!courseId) {
+      return res.status(400).json({
+        success: false,
+        message: "A courseId is required to create a module.",
+        code: "COURSE_ID_REQUIRED",
+      });
+    }
+
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found.",
+        code: "COURSE_NOT_FOUND",
+      });
+    }
+
+    const isOwner =
+      (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
+      (course.createdBy && course.createdBy.toString() === req.user._id.toString());
+
+    if (!isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only manage modules for courses assigned to or created by yourself.",
+        code: "COURSE_OWNERSHIP_DENIED",
+      });
     }
 
     next();

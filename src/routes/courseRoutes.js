@@ -1,6 +1,7 @@
 import express from "express";
 import {
   getCourses,
+  getMyCourses,
   getCourseBySlug,
   createCourse,
   updateCourse,
@@ -30,6 +31,7 @@ const optionalAuth = (req, res, next) => {
 
 router.get("/", optionalAuth, getCourses);
 router.get("/my/enrollments", authenticate, authorize("student"), getMyEnrollments);
+router.get("/my", authenticate, authorize("teacher", "admin"), getMyCourses);
 router.get("/:slug/progression", authenticate, getCourseProgressionHandler);
 router.get("/:slug/modules/:moduleId/progression", authenticate, getModuleProgressionHandler);
 router.post("/:slug/modules/:moduleId/video-progress", authenticate, recordVideoProgressHandler);
