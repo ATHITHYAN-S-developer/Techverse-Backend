@@ -70,6 +70,33 @@ TechVerse Backend is a high-performance RESTful API built with **Node.js**, **Ex
 
 ---
 
+## ✅ Prerequisites & Requirements
+
+`npm run dev` / `npm start` now run an automatic **environment requirements check** that detects your OS, verifies every tool below, prints the exact install commands for anything missing, and blocks startup until satisfied. Run it manually anytime with `npm run requirements`, or bypass once with `SKIP_REQUIREMENTS=1 npm run dev`.
+
+| Tool | Required for | Notes |
+| :--- | :--- | :--- |
+| **Node.js 18+** | The API server | — |
+| **npm** | Package management | Ships with Node.js |
+| **Python 3** | Coding Arena runner | `python3` on Linux/macOS |
+| **GCC (`gcc`)** | Coding Arena — C submissions | Real compilation required |
+| **G++ (`g++`)** | Coding Arena — C++ submissions | Real compilation required |
+| **JDK + JRE (`javac` / `java`)** | Coding Arena — Java submissions | `javac` compiles, `java` runs |
+| **MongoDB (`mongod`)** | Database | Only enforced when `MONGO_URI` points at `localhost`; remote (Atlas) URIs skip it |
+
+### Per-OS install examples
+
+| OS | Install |
+| :--- | :--- |
+| **Ubuntu / Debian** | `sudo apt-get install -y gcc g++ python3 openjdk-17-jdk` |
+| **Fedora / RHEL** | `sudo dnf install -y gcc gcc-c++ python3 java-17-openjdk` |
+| **macOS** | `xcode-select --install` then `brew install openjdk@17` |
+| **Windows** | Install **WSL2 + Ubuntu** (https://learn.microsoft.com/windows/wsl/install) and run the backend inside it |
+
+> The checker also verifies `.env` is never tracked by git, so secrets cannot be committed.
+
+---
+
 ## 🚀 Getting Started
 
 ### 1. Prerequisites
