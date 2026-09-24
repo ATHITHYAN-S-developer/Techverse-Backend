@@ -187,6 +187,21 @@ export async function runCodeAgainstTestCases(language, sourceCode, testCases = 
   try {
     const runner = buildRunner(language, sourceCode, tmpDir);
 
+    if (!runner) {
+      return {
+        status: "Unsupported Language",
+        passed: 0,
+        total: testCases.length,
+        passedCases: 0,
+        totalCases: testCases.length,
+        executionTime: 0,
+        memory: 0,
+        testResults: [],
+        allPassed: false,
+        compileError: `Unsupported language: ${language || "(empty)"}. Supported: c, cpp, java, javascript, python.`,
+      };
+    }
+
     // Compile step (C / C++ / Java) before executing any test case
     if (runner?.compile) {
       const compiled = await executeProcess(
@@ -219,18 +234,7 @@ export async function runCodeAgainstTestCases(language, sourceCode, testCases = 
       const inputStr = tc.input || "";
       const expectedStr = normalizeOutput(tc.expectedOutput || tc.expected || "");
 
-      let runResult;
-      if (runner?.run) {
-        runResult = await executeProcess(runner.run.cmd, runner.run.args, inputStr);
-      } else {
-        // Fallback simulated execution for unsupported languages (removed in a follow-up commit)
-        runResult = {
-          success: true,
-          status: "Success",
-          stdout: expectedStr,
-          executionTime: 12 + Math.floor(Math.random() * 8),
-        };
-      }
+      const runResult = await executeProcess(runner.run.cmd, runner.run.args, inputStr);
 
       const actualStr = normalizeOutput(runResult.stdout);
       const isPassed = runResult.success && actualStr === expectedStr;
