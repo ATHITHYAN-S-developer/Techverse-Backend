@@ -5,9 +5,12 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/check-requirements.js",
     "dev": "nodemon src/server.js",
+    "prestart": "node scripts/check-requirements.js",
     "start": "node src/server.js",
-    "seed": "node src/seed/seedDatabase.js"
+    "seed": "node src/seed/seedDatabase.js",
+    "requirements": "node scripts/check-requirements.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
