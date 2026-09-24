@@ -105,6 +105,24 @@ export async function createAnnouncement(req, res, next) {
       return res.status(400).json({ success: false, message: "Title and description are required." });
     }
 
+    // Deadline / End Date validation (stored in the existing `expiryDate` field).
+    if (
+      expiryDate !== undefined &&
+      expiryDate !== null &&
+      expiryDate !== "" &&
+      Number.isNaN(new Date(expiryDate).getTime())
+    ) {
+      return res.status(400).json({ success: false, message: "The deadline/end date must be a valid date." });
+    }
+    // Faculty (teacher) publishes always need a deadline so announcements can be
+    // classified CURRENT / UPCOMING / ENDED automatically (slideshow + past grid).
+    if (
+      req.user.role !== "admin" &&
+      (expiryDate === undefined || expiryDate === null || expiryDate === "")
+    ) {
+      return res.status(400).json({ success: false, message: "Please select a deadline/end date." });
+    }
+
     // Teacher isolation: If teacher, target department must be teacher's assigned department
     let targetDept = departmentId;
     if (req.user.role === "teacher") {
@@ -185,6 +203,14 @@ export async function updateAnnouncement(req, res, next) {
     }
 
     const updates = { ...req.body };
+    // Normalize deadline: empty string can't be stored in a Date field.
+    if (updates.expiryDate === "" || updates.expiryDate === null) delete updates.expiryDate;
+    if (
+      updates.expiryDate !== undefined &&
+      Number.isNaN(new Date(updates.expiryDate).getTime())
+    ) {
+      return res.status(400).json({ success: false, message: "The deadline/end date must be a valid date." });
+    }
     // Issuer identity always comes from the authenticated session — never trust the client.
     delete updates.createdBy;
     delete updates.authorName;
