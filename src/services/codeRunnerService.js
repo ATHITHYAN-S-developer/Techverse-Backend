@@ -5,6 +5,7 @@ import os from "os";
 import crypto from "crypto";
 
 const TIMEOUT_MS = 3000; // 3 seconds max per test case
+const COMPILE_TIMEOUT_MS = 5000; // 5 seconds max for compilation
 
 /**
  * Normalizes output string by removing carriage returns and trimming trailing whitespaces.
@@ -15,6 +16,67 @@ function normalizeOutput(str) {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .trim();
+}
+
+/**
+ * Explains a missing compiler in a human-friendly way.
+ */
+function friendlyCompilerError(cmd, rawError) {
+  if (rawError && /(ENOENT|not found|not recognized|is not recognized)/i.test(rawError || "")) {
+    return `Compiler '${cmd}' was not found on this machine. Install the Coding Arena toolchain (run 'npm run requirements' for per-OS instructions).`;
+  }
+  return rawError || `Failed to run '${cmd}'. Install the required compiler (see 'npm run requirements').`;
+}
+
+/**
+ * Builds the execute configuration for a language by writing the source into the
+ * temporary sandbox directory and (for compiled languages) producing the compile step.
+ * Returns { compile?, run } or null when the language is not supported.
+ */
+function buildRunner(language, sourceCode, tmpDir) {
+  if (language === "javascript" || language === "js") {
+    const filePath = path.join(tmpDir, "solution.js");
+    fs.writeFileSync(filePath, sourceCode, "utf8");
+    return { run: { cmd: process.execPath, args: [filePath] } };
+  }
+
+  if (language === "python" || language === "py") {
+    const filePath = path.join(tmpDir, "solution.py");
+    fs.writeFileSync(filePath, sourceCode, "utf8");
+    // Try 'python' on windows or fallback
+    return { run: { cmd: process.platform === "win32" ? "python" : "python3", args: [filePath] } };
+  }
+
+  if (language === "c") {
+    const filePath = path.join(tmpDir, "solution.c");
+    const binPath = path.join(tmpDir, "solution");
+    fs.writeFileSync(filePath, sourceCode, "utf8");
+    return {
+      compile: { cmd: "gcc", args: ["-O2", "-Wall", filePath, "-o", binPath, "-lm"] },
+      run: { cmd: binPath, args: [] },
+    };
+  }
+
+  if (language === "cpp" || language === "c++") {
+    const filePath = path.join(tmpDir, "solution.cpp");
+    const binPath = path.join(tmpDir, "solution");
+    fs.writeFileSync(filePath, sourceCode, "utf8");
+    return {
+      compile: { cmd: "g++", args: ["-O2", "-Wall", filePath, "-o", binPath] },
+      run: { cmd: binPath, args: [] },
+    };
+  }
+
+  if (language === "java") {
+    const filePath = path.join(tmpDir, "Solution.java");
+    fs.writeFileSync(filePath, sourceCode, "utf8");
+    return {
+      compile: { cmd: "javac", args: [filePath] },
+      run: { cmd: "java", args: ["-cp", tmpDir, "Solution"] },
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -123,23 +185,32 @@ export async function runCodeAgainstTestCases(language, sourceCode, testCases = 
   let overallStatus = "Accepted";
 
   try {
-    let runnerConfig = null;
+    const runner = buildRunner(language, sourceCode, tmpDir);
 
-    if (language === "javascript" || language === "js") {
-      const filePath = path.join(tmpDir, "solution.js");
-      fs.writeFileSync(filePath, sourceCode, "utf8");
-      runnerConfig = {
-        cmd: process.execPath, // node
-        args: [filePath],
-      };
-    } else if (language === "python" || language === "py") {
-      const filePath = path.join(tmpDir, "solution.py");
-      fs.writeFileSync(filePath, sourceCode, "utf8");
-      // Try 'python' on windows or fallback
-      runnerConfig = {
-        cmd: process.platform === "win32" ? "python" : "python3",
-        args: [filePath],
-      };
+    // Compile step (C / C++ / Java) before executing any test case
+    if (runner?.compile) {
+      const compiled = await executeProcess(
+        runner.compile.cmd,
+        runner.compile.args,
+        undefined,
+        COMPILE_TIMEOUT_MS
+      );
+      if (!compiled.success) {
+        const compileError = friendlyCompilerError(runner.compile.cmd, compiled.error);
+        return {
+          status: "Compilation Error",
+          passed: 0,
+          total: testCases.length,
+          passedCases: 0,
+          totalCases: testCases.length,
+          executionTime: 0,
+          memory: 0,
+          testResults: [],
+          allPassed: false,
+          compileError,
+          compileErrorMessage: compileError,
+        };
+      }
     }
 
     // Execute each test case
@@ -149,10 +220,10 @@ export async function runCodeAgainstTestCases(language, sourceCode, testCases = 
       const expectedStr = normalizeOutput(tc.expectedOutput || tc.expected || "");
 
       let runResult;
-      if (runnerConfig) {
-        runResult = await executeProcess(runnerConfig.cmd, runnerConfig.args, inputStr);
+      if (runner?.run) {
+        runResult = await executeProcess(runner.run.cmd, runner.run.args, inputStr);
       } else {
-        // Fallback simulated execution for compiled languages if host compiler is not configured
+        // Fallback simulated execution for unsupported languages (removed in a follow-up commit)
         runResult = {
           success: true,
           status: "Success",
