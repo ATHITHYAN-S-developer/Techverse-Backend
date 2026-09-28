@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import {
   getCodingTests,
   getCodingTestById,
+  getCodingProgress,
   getAllCodingTestsAdmin,
   createCodingTest,
   updateCodingTest,
@@ -52,6 +53,7 @@ const submitLimiter = codingRateLimit(
 // Public / Student Read
 router.get("/", getCodingTests);
 router.get("/:id", getCodingTestById);
+router.get("/:id/progress", protect, getCodingProgress);
 
 // Teacher / Faculty / Admin Management Endpoints
 router.get("/admin/all", protect, authorize("admin", "teacher", "faculty"), getAllCodingTestsAdmin);

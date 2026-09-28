@@ -77,6 +77,71 @@ export async function getCodingTestById(req, res, next) {
 }
 
 /**
+ * @route   GET /api/coding/:id/progress
+ * @desc    Get done/not-done progress per (student, problem)
+ * @access  Private (Students see their own; staff see all)
+ */
+export async function getCodingProgress(req, res, next) {
+  try {
+    const { id } = req.params;
+    const isStaff = ["admin", "teacher", "faculty"].includes(req.user?.role);
+
+    const test = (await CodingTest.findById(id)) || (await CodingTest.findOne({ slug: id }));
+    if (!test) {
+      return res.status(404).json({
+        success: false,
+        message: "Coding test not found.",
+        code: "TEST_NOT_FOUND",
+      });
+    }
+
+    const match = { codingTestId: test._id };
+    if (!isStaff) {
+      match.studentId = req.user._id;
+    }
+
+    const records = await CodingProgress.find(match).populate({
+      path: "studentId",
+      select: "name registerNumber email",
+    });
+
+    const problems = test.problems.map((p) => ({ _id: p._id, title: p.title, slug: p.slug }));
+    const studentMap = new Map();
+
+    for (const rec of records) {
+      const student = rec.studentId;
+      if (!student) continue;
+      const key = String(student._id);
+      if (!studentMap.has(key)) {
+        studentMap.set(key, {
+          studentId: student._id,
+          name: student.name,
+          registerNumber: student.registerNumber,
+          email: student.email,
+          problems: {},
+        });
+      }
+      studentMap.get(key).problems[String(rec.problemId)] = {
+        done: rec.done,
+        solvedAt: rec.solvedAt,
+        bestScore: rec.bestScore,
+        attempts: rec.attempts,
+        language: rec.language,
+        lastStatus: rec.lastStatus,
+      };
+    }
+
+    res.json({
+      success: true,
+      problems,
+      students: Array.from(studentMap.values()),
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * @route   POST /api/coding/:id/run
  * @desc    Run code against public test cases only (Fast Debugging)
  * @access  Private (Student)
