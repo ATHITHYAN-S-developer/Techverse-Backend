@@ -17,10 +17,10 @@ const RESET = "\x1b[0m";
 
 const REQUIRED_TOOLS = [
   { id: "node", exe: "node", label: "Node.js (server runtime)" },
-  { id: "npm", exe: "npm", label: "npm (package manager)" },
+  { id: "npm", probes: ["npm", "npm.cmd"], label: "npm (package manager)" },
   { id: "python3", probes: ["python3", "python"], label: "Python 3 (Coding Arena runner)" },
   { id: "gcc", exe: "gcc", label: "GCC (C compiler)" },
-  { id: "gpp", exe: "g++", label: "G++ (C++ compiler)" },
+  { id: "gpp", probes: ["g++", "gpp"], label: "G++ (C++ compiler)" },
   { id: "javac", exe: "javac", label: "JDK javac (Java compiler)" },
   { id: "java", exe: "java", label: "JRE java (Java runtime)" },
 ];
@@ -134,11 +134,18 @@ function probe(exes) {
       encoding: "utf8",
       timeout: 15000,
       windowsHide: true,
+      shell: process.platform === "win32",
     });
-    if (res.error && res.error.code === "ENOENT") continue;
-    const text = (res.stdout || res.stderr || "").split("\n")[0].trim();
-    if (res.status === null && !text) continue;
-    if (res.status !== 0 && !res.stdout && !res.stderr) continue;
+    if (res.error) continue;
+    if (res.status !== 0) continue;
+    const text = (res.stdout || "").split("\n")[0].trim();
+    if (!text && res.stderr) {
+      const errText = res.stderr.split("\n")[0].trim();
+      if (!/not recognized|cannot find/i.test(errText)) {
+        return { found: true, version: errText };
+      }
+      continue;
+    }
     return { found: true, version: text || `${exe} present` };
   }
   return { found: false, version: null };
@@ -207,7 +214,21 @@ export function main() {
 
   log(`\n${BOLD}Database${RESET}`);
   const mongoUri = loadEnvVar("MONGO_URI");
-  const mongo = probe(["mongod"]);
+  const mongoProbes = ["mongod"];
+  if (process.platform === "win32") {
+    try {
+      const serverDir = "C:\\Program Files\\MongoDB\\Server";
+      if (fs.existsSync(serverDir)) {
+        for (const ver of fs.readdirSync(serverDir)) {
+          const binPath = path.join(serverDir, ver, "bin", "mongod.exe");
+          if (fs.existsSync(binPath)) {
+            mongoProbes.push(`"${binPath}"`);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+  const mongo = probe(mongoProbes);
   if (mongo.found) {
     ok(`[mongod] local MongoDB server — ${mongo.version}`);
   } else if (isLocalMongoUri(mongoUri)) {
