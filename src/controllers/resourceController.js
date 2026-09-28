@@ -15,7 +15,9 @@ const UPLOADS_ROOT = path.join(process.cwd(), "uploads", "resources");
  */
 export async function getResources(req, res, next) {
   try {
-    const { departmentId, subjectId, classId, type, unit, search, all } = req.query;
+    const { departmentId,
+      subjectId,
+      classId, type, unit, search, all } = req.query;
     const { page, limit, skip } = getPagination(req.query, 20);
 
     const query = { isPublished: true };
@@ -127,12 +129,14 @@ export async function createResource(req, res, next) {
       tags = [],
     } = req.body;
 
-    if (!title || !departmentId || !subjectId) {
+    if (!title || !departmentId) {
       return res.status(400).json({
         success: false,
-        message: "Title, Department ID, and Subject ID are required.",
+        message: "Title and Department ID are required.",
       });
     }
+
+    const subjectField = subjectId || undefined;
 
     // Auto-derive file information if uploaded via multipart
     let finalFileUrl = fileUrl || req.body.externalUrl || "";
@@ -153,7 +157,7 @@ export async function createResource(req, res, next) {
       title,
       description,
       departmentId,
-      subjectId,
+      subjectId: subjectField,
       classId,
       type,
       fileUrl: finalFileUrl || "https://vcet.ac.in/resources/sample.pdf",
