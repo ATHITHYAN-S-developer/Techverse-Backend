@@ -1,6 +1,8 @@
 import { CodingTest } from "../models/CodingTest.js";
 import { CodingSubmission } from "../models/CodingSubmission.js";
+import { CodingProgress } from "../models/CodingProgress.js";
 import { TestViolation } from "../models/TestViolation.js";
+import { User } from "../models/User.js";
 import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
 import { ArenaBusyError } from "../services/semaphore.js";
 import { awardPoints } from "../services/pointsService.js";
@@ -204,13 +206,13 @@ export async function submitCode(req, res, next) {
       await updateStreak(studentId);
     }
 
-    // Create submission record
+    // Create submission record (verdict + evaluation metrics only; the source
+    // code is evaluated but intentionally NOT stored)
     const submission = await CodingSubmission.create({
       studentId,
       codingTestId: test._id,
       problemId: problem._id,
       language,
-      sourceCode,
       status: result.status,
       passedCases,
       totalCases,
@@ -222,6 +224,31 @@ export async function submitCode(req, res, next) {
       violations,
       submissionType,
     });
+
+    // Track done/not-done progress per (student, test, problem)
+    const now = new Date();
+    const existingProgress = await CodingProgress.findOne({
+      studentId,
+      codingTestId: test._id,
+      problemId: problem._id,
+    });
+    const firstSolve = isAccepted && !(existingProgress && existingProgress.done);
+
+    await CodingProgress.findOneAndUpdate(
+      { studentId, codingTestId: test._id, problemId: problem._id },
+      {
+        $inc: { attempts: 1 },
+        $set: {
+          done: isAccepted || (existingProgress?.done || false),
+          solvedAt: firstSolve ? now : (existingProgress?.solvedAt || null),
+          language,
+          lastStatus: result.status,
+          lastSubmittedAt: now,
+        },
+        $max: { bestScore: scorePercentage },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
     await logAuditEvent({
       userId: studentId,

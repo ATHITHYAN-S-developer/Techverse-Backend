@@ -37,10 +37,6 @@ const codingSubmissionSchema = new mongoose.Schema(
       required: true,
       enum: ["python", "javascript", "cpp", "java", "c"],
     },
-    sourceCode: {
-      type: String,
-      required: true,
-    },
     status: {
       type: String,
       enum: [
