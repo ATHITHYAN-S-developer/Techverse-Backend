@@ -95,6 +95,22 @@ TechVerse Backend is a high-performance RESTful API built with **Node.js**, **Ex
 
 > The checker also verifies `.env` is never tracked by git, so secrets cannot be committed.
 
+### 🛡️ Coding Arena burst protection
+
+The arena is hardened for large batches of simultaneous students (e.g. the full class hitting *Run* at once):
+
+| Mechanism | Default | Env override |
+| :--- | :--- | :--- |
+| **Concurrency pool** caps simultaneous compiles/runs | `2 × CPU cores` (24 on a 12-core box) | `CODE_RUN_MAX_CONCURRENCY` |
+| **Queue wait** before returning `503 ARENA_BUSY` | `8000` ms | `CODE_RUN_MAX_QUEUE_WAIT_MS` |
+| **Run limit** per student | `30` / min | — (constant in `src/routes/codingRoutes.js`) |
+| **Submit limit** per student | `10` / min | — (constant in `src/routes/codingRoutes.js`) |
+
+- The pool is shared, FIFO, and per-*request* — a student's 3s per-case timer only starts once they hold a slot, so a busy moment never causes false timeouts.
+- When the pool is saturated, excess requests get `503 { code: "ARENA_BUSY", retryAfter }` immediately; the student's UI shows a "retry in a moment" message instead of hanging.
+- Rate limits are keyed by the authenticated student ID, not IP — a shared campus subnet can't throttle all students at once.
+- **Deployment sizing:** 1–2 core VPS (e.g. 2GB droplet) should use default `CODE_RUN_MAX_CONCURRENCY` (4) — the queue + 503s keep it smooth; raise `CODE_RUN_MAX_CONCURRENCY` on larger boxes only.
+
 ---
 
 ## 🚀 Getting Started
