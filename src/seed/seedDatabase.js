@@ -1581,8 +1581,8 @@ async function seedDatabase() {
           sampleInput: "2 7 11 15\n9",
           sampleOutput: "0 1",
           starterCode: {
-            python: "import sys\n\ndef two_sum():\n    lines = sys.stdin.read().strip().split('\\n')\n    if not lines or len(lines) < 2: return\n    nums = list(map(int, lines[0].split()))\n    target = int(lines[1])\n    \n    seen = {}\n    for i, num in enumerate(nums):\n        comp = target - num\n        if comp in seen:\n            print(f\"{seen[comp]} {i}\")\n            return\n        seen[num] = i\n\nif __name__ == '__main__':\n    two_sum()",
-            javascript: "const fs = require('fs');\nconst input = fs.readFileSync('/dev/stdin', 'utf-8').trim().split('\\n');\nif (input.length >= 2) {\n  const nums = input[0].split(' ').map(Number);\n  const target = Number(input[1]);\n  const map = new Map();\n  for (let i = 0; i < nums.length; i++) {\n    const comp = target - nums[i];\n    if (map.has(comp)) {\n      console.log(`${map.get(comp)} ${i}`);\n      break;\n    }\n    map.set(nums[i], i);\n  }\n}",
+            python: "import sys\n\ndef two_sum():\n    lines = sys.stdin.read().strip().split('\\n')\n    if not lines or len(lines) < 2:\n        return\n    nums = list(map(int, lines[0].split()))\n    target = int(lines[1])\n    # Write your solution here\n\nif __name__ == '__main__':\n    two_sum()",
+            javascript: "const fs = require('fs');\nconst input = fs.readFileSync('/dev/stdin', 'utf-8').trim().split('\\n');\nif (input.length >= 2) {\n  const nums = input[0].split(' ').map(Number);\n  const target = Number(input[1]);\n  // Write your solution here\n}",
             cpp: "#include <iostream>\n#include <vector>\n#include <unordered_map>\nusing namespace std;\n\nint main() {\n    // Solution template\n    return 0;\n}",
             java: "import java.util.*;\n\npublic class Solution {\n    public static void main(String[] args) {\n        // Solution template\n    }\n}",
             c: "#include <stdio.h>\n\nint main() {\n    // Solution template\n    return 0;\n}",
@@ -1624,8 +1624,8 @@ async function seedDatabase() {
           sampleInput: "abcabcbb",
           sampleOutput: "3",
           starterCode: {
-            python: "import sys\n\ndef length_of_longest_substring():\n    lines = sys.stdin.read().splitlines()\n    s = lines[0] if lines else ''\n    char_map = {}\n    left = 0\n    max_len = 0\n    for right, ch in enumerate(s):\n        if ch in char_map and char_map[ch] >= left:\n            left = char_map[ch] + 1\n        char_map[ch] = right\n        max_len = max(max_len, right - left + 1)\n    print(max_len)\n\nif __name__ == '__main__':\n    length_of_longest_substring()",
-            javascript: "const fs = require('fs');\nconst input = fs.readFileSync(0, 'utf-8').trim();\nconst map = new Map();\nlet left = 0, maxLen = 0;\nfor (let right = 0; right < input.length; right++) {\n  const ch = input[right];\n  if (map.has(ch) && map.get(ch) >= left) {\n    left = map.get(ch) + 1;\n  }\n  map.set(ch, right);\n  maxLen = Math.max(maxLen, right - left + 1);\n}\nconsole.log(maxLen);",
+            python: "import sys\n\ndef length_of_longest_substring():\n    lines = sys.stdin.read().splitlines()\n    s = lines[0] if lines else ''\n    # Write your solution here\n\nif __name__ == '__main__':\n    length_of_longest_substring()",
+            javascript: "const fs = require('fs');\nconst input = fs.readFileSync(0, 'utf-8').trim();\n// Write your solution here",
             cpp: "#include <iostream>\n#include <string>\n#include <unordered_map>\nusing namespace std;\n\nint main() {\n    return 0;\n}",
             java: "import java.util.*;\npublic class Solution { public static void main(String[] args) {} }",
             c: "#include <stdio.h>\nint main() { return 0; }",
