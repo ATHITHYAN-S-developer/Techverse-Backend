@@ -74,6 +74,15 @@ export function checkDepartmentAccess(resourceType = "body") {
           });
         }
 
+        // Faculty can only edit or delete resources they uploaded themselves
+        if (existing.uploadedBy && existing.uploadedBy.toString() !== req.user._id.toString()) {
+          return res.status(403).json({
+            success: false,
+            message: "Permission Denied: You can only edit or delete resources you uploaded.",
+            code: "RESOURCE_OWNER_DENIED",
+          });
+        }
+
         req.targetResource = existing;
         return next();
       }
