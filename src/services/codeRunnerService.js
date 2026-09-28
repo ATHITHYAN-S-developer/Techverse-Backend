@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import crypto from "crypto";
+import { ENV } from "../config/env.js";
+import { codeRunSemaphore } from "./semaphore.js";
 
 const TIMEOUT_MS = 3000; // 3 seconds max per test case
 const COMPILE_TIMEOUT_MS = 5000; // 5 seconds max for compilation
@@ -179,12 +181,12 @@ export async function runCodeAgainstTestCases(language, sourceCode, testCases = 
   const tmpDir = path.join(os.tmpdir(), "techverse_sandbox_" + crypto.randomBytes(4).toString("hex"));
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  const testResults = [];
-  let allPassed = true;
-  let totalExecutionTime = 0;
-  let overallStatus = "Accepted";
+  const runTask = async () => {
+    const testResults = [];
+    let allPassed = true;
+    let totalExecutionTime = 0;
+    let overallStatus = "Accepted";
 
-  try {
     const runner = buildRunner(language, sourceCode, tmpDir);
 
     if (!runner) {
@@ -280,6 +282,10 @@ export async function runCodeAgainstTestCases(language, sourceCode, testCases = 
       testResults,
       allPassed,
     };
+  };
+
+  try {
+    return await codeRunSemaphore.run(runTask, ENV.CODE_RUN_MAX_QUEUE_WAIT_MS);
   } finally {
     // Clean up temporary sandbox directory
     try {

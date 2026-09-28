@@ -2,9 +2,22 @@ import { CodingTest } from "../models/CodingTest.js";
 import { CodingSubmission } from "../models/CodingSubmission.js";
 import { TestViolation } from "../models/TestViolation.js";
 import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
+import { ArenaBusyError } from "../services/semaphore.js";
 import { awardPoints } from "../services/pointsService.js";
 import { updateStreak } from "../services/streakService.js";
 import { logAuditEvent } from "../services/auditService.js";
+
+function handleRunError(error, req, res, next) {
+  if (error instanceof ArenaBusyError) {
+    return res.status(503).set("Retry-After", String(error.retryAfter)).json({
+      success: false,
+      message: error.message,
+      code: error.code,
+      retryAfter: error.retryAfter,
+    });
+  }
+  next(error);
+}
 
 /**
  * @route   GET /api/coding
@@ -112,7 +125,7 @@ export async function runCode(req, res, next) {
       ...result,
     });
   } catch (error) {
-    next(error);
+    handleRunError(error, req, res, next);
   }
 }
 
@@ -242,7 +255,7 @@ export async function submitCode(req, res, next) {
       submissionType,
     });
   } catch (error) {
-    next(error);
+    handleRunError(error, req, res, next);
   }
 }
 
