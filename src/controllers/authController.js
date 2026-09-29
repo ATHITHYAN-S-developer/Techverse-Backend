@@ -31,14 +31,14 @@ function isCredentialValid(role, user, secret) {
  * @desc    Authenticate user & issue JWT
  * @access  Public
  *
- * Students sign in with their register number and date of birth. Staff and
- * admins sign in with their ID/username and a password. The frontend posts the
- * secret in the same `password` field for every role, so the credential is
- * interpreted according to the role.
+ * Students sign in with their register number and date of birth, posted in the
+ * `dateOfBirth` field. Staff and admins sign in with their ID/username and a
+ * `password`. The two credentials are read from separate fields so a date of
+ * birth is never handled as if it were a password.
  */
 export async function login(req, res, next) {
   try {
-    const { role = "student", password } = req.body;
+    const { role = "student" } = req.body;
     const identifier =
       req.body.identifier ||
       req.body.registerNumber ||
@@ -46,7 +46,15 @@ export async function login(req, res, next) {
       req.body.username ||
       req.body.email;
 
-    if (!identifier || !password) {
+    // Students authenticate with a date of birth; everyone else with a password.
+    // `password` is still honoured for students so older clients that posted the
+    // date there keep working.
+    const secret =
+      role === "student"
+        ? req.body.dateOfBirth || req.body.dob || req.body.password
+        : req.body.password;
+
+    if (!identifier || !secret) {
       return res.status(400).json({
         success: false,
         message:
@@ -88,7 +96,7 @@ export async function login(req, res, next) {
       });
     }
 
-    if (!isCredentialValid(role, user, password)) {
+    if (!isCredentialValid(role, user, secret)) {
       const hint =
         role === "student" && !user.dateOfBirth
           ? " No date of birth is on file for this register number - please contact the administrator."
