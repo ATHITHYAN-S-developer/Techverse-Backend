@@ -1,4 +1,5 @@
 import { User } from "../models/User.js";
+import { Department } from "../models/Department.js";
 import { getPagination } from "../utils/pagination.js";
 import { logAuditEvent } from "../services/auditService.js";
 
@@ -9,21 +10,39 @@ import { logAuditEvent } from "../services/auditService.js";
  */
 export async function getUsers(req, res, next) {
   try {
-    const { role, departmentId, isActive, search } = req.query;
+    const { role, departmentId, departmentCode, isActive, search } = req.query;
     const { page, limit, skip } = getPagination(req.query, 20);
 
     const query = {};
     if (role) query.role = role;
-    if (departmentId) query.departmentId = departmentId;
     if (isActive !== undefined) query.isActive = isActive === "true";
 
+    if (departmentId) {
+      query.departmentId = departmentId;
+    } else if (departmentCode) {
+      // Resolve the branch code so callers (and the student roster screen) do not
+      // have to know the ObjectId behind a branch.
+      const department = await Department.findOne({
+        code: String(departmentCode).trim().toUpperCase(),
+      }).select("_id");
+      if (!department) {
+        return res.json({
+          success: true,
+          users: [],
+          pagination: { page, limit, total: 0, totalPages: 0 },
+        });
+      }
+      query.departmentId = department._id;
+    }
+
     if (search) {
+      const safe = String(search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { registerNumber: { $regex: search, $options: "i" } },
-        { staffId: { $regex: search, $options: "i" } },
-        { username: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
+        { name: { $regex: safe, $options: "i" } },
+        { registerNumber: { $regex: safe, $options: "i" } },
+        { staffId: { $regex: safe, $options: "i" } },
+        { username: { $regex: safe, $options: "i" } },
+        { email: { $regex: safe, $options: "i" } },
       ];
     }
 

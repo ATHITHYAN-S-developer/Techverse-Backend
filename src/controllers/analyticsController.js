@@ -5,6 +5,8 @@ import {
   getVisitorAnalytics,
   recordVisitorHit as recordVisitorHitService,
   getVisitorTotals,
+  getActivityTelemetry,
+  localTimezone,
 } from "../services/analyticsService.js";
 import { Enrollment } from "../models/Enrollment.js";
 import { TestAttempt } from "../models/TestAttempt.js";
@@ -13,6 +15,8 @@ import { Resource } from "../models/Resource.js";
 import { User } from "../models/User.js";
 import { TestViolation } from "../models/TestViolation.js";
 import { CodingSubmission } from "../models/CodingSubmission.js";
+import { DailyTest } from "../models/DailyTest.js";
+import { CodingTest } from "../models/CodingTest.js";
 
 /**
  * @route   GET /api/analytics/overview
@@ -21,16 +25,34 @@ import { CodingSubmission } from "../models/CodingSubmission.js";
  */
 export async function getOverview(req, res, next) {
   try {
-    const summary = await getOverviewSummary();
-    const departmentDistribution = await getDepartmentAnalytics();
-    const courseStats = await getCourseAnalytics();
-    const visitorTrends = await getVisitorAnalytics(7);
+    const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
 
-    // Recharts-ready test performance data
+    const [
+      summary,
+      departmentDistribution,
+      courseStats,
+      visitorTrends,
+      activityTelemetry,
+    ] = await Promise.all([
+      getOverviewSummary(),
+      getDepartmentAnalytics(),
+      getCourseAnalytics(),
+      getVisitorAnalytics(days),
+      getActivityTelemetry(days),
+    ]);
+
+    // Recharts-ready test performance data, bucketed on the local calendar day
+    // so it lines up with the visitor trend and activity series.
     const recentTests = await TestAttempt.aggregate([
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$attemptedAt" } },
+          _id: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$attemptedAt",
+              timezone: localTimezone(),
+            },
+          },
           totalAttempts: { $sum: 1 },
           avgScore: { $avg: "$percentage" },
           passedCount: { $sum: { $cond: ["$passed", 1, 0] } },
@@ -54,6 +76,7 @@ export async function getOverview(req, res, next) {
       courseStats,
       visitorTrends,
       testTrends,
+      activityTelemetry,
     });
   } catch (error) {
     next(error);
@@ -169,6 +192,9 @@ export async function getViolationsAnalytics(req, res, next) {
       autoSubmittedMcq,
       totalCodingSubmissions,
       autoSubmittedCoding,
+      totalViolationCount,
+      activeDailyTests,
+      activeCodingTests,
       violationLogs,
       typeDistribution,
     ] = await Promise.all([
@@ -176,6 +202,9 @@ export async function getViolationsAnalytics(req, res, next) {
       TestAttempt.countDocuments({ submissionType: "auto_violation" }),
       CodingSubmission.countDocuments(),
       CodingSubmission.countDocuments({ submissionType: "auto_violation" }),
+      TestViolation.countDocuments(),
+      DailyTest.countDocuments({ isPublished: true }),
+      CodingTest.countDocuments({ isPublished: true }),
       TestViolation.find()
         .populate("studentId", "name registerNumber staffId email departmentId")
         .sort({ timestamp: -1 })
@@ -202,38 +231,48 @@ export async function getViolationsAnalytics(req, res, next) {
     };
 
     typeDistribution.forEach((t) => {
-      if (violationTypeCounts.hasOwnProperty(t._id)) {
-        violationTypeCounts[t._id] = t.count;
-      }
+      if (t._id) violationTypeCounts[t._id] = t.count;
     });
 
-    const totalViolations = Object.values(violationTypeCounts).reduce((a, b) => a + b, 0);
+    // Count the collection directly so unknown violation types are never lost.
+    const totalViolations = totalViolationCount;
     const totalStarted = totalMcqAttempts + totalCodingSubmissions;
     const totalAutoSubmitted = autoSubmittedMcq + autoSubmittedCoding;
-    const totalCompleted = totalStarted - totalAutoSubmitted;
+    const totalCompleted = Math.max(totalStarted - totalAutoSubmitted, 0);
 
     res.json({
       success: true,
       summary: {
-        totalStarted: totalStarted || 142,
-        totalCompleted: totalCompleted || 128,
-        totalAutoSubmitted: totalAutoSubmitted || 7,
-        totalViolations: totalViolations || 99,
-        activeTests: 7,
+        totalStarted,
+        totalCompleted,
+        totalAutoSubmitted,
+        totalViolations,
+        activeTests: activeDailyTests + activeCodingTests,
+        activeDailyTests,
+        activeCodingTests,
       },
       violationDistribution: {
-        tabSwitch: violationTypeCounts.TAB_SWITCH || 31,
-        fullscreenExit: violationTypeCounts.FULLSCREEN_EXIT || 14,
-        windowBlur: violationTypeCounts.WINDOW_BLUR || 27,
-        copyAttempt: violationTypeCounts.COPY_ATTEMPT || 9,
-        pasteAttempt: violationTypeCounts.PASTE_ATTEMPT || 18,
+        tabSwitch: violationTypeCounts.TAB_SWITCH,
+        fullscreenExit: violationTypeCounts.FULLSCREEN_EXIT,
+        windowBlur: violationTypeCounts.WINDOW_BLUR,
+        copyAttempt: violationTypeCounts.COPY_ATTEMPT,
+        pasteAttempt: violationTypeCounts.PASTE_ATTEMPT,
+        cutAttempt: violationTypeCounts.CUT_ATTEMPT,
+        contextMenu: violationTypeCounts.CONTEXT_MENU,
+        devtoolsOpen: violationTypeCounts.DEVTOOLS_OPEN,
       },
       chartData: [
-        { name: "Tab Switch", count: violationTypeCounts.TAB_SWITCH || 31, color: "#EF4444" },
-        { name: "Window Blur", count: violationTypeCounts.WINDOW_BLUR || 27, color: "#F59E0B" },
-        { name: "Paste Attempt", count: violationTypeCounts.PASTE_ATTEMPT || 18, color: "#8B5CF6" },
-        { name: "Fullscreen Exit", count: violationTypeCounts.FULLSCREEN_EXIT || 14, color: "#EC4899" },
-        { name: "Copy Attempt", count: violationTypeCounts.COPY_ATTEMPT || 9, color: "#3B82F6" },
+        { name: "Tab Switch", count: violationTypeCounts.TAB_SWITCH, color: "#EF4444" },
+        { name: "Window Blur", count: violationTypeCounts.WINDOW_BLUR, color: "#F59E0B" },
+        { name: "Paste Attempt", count: violationTypeCounts.PASTE_ATTEMPT, color: "#8B5CF6" },
+        { name: "Fullscreen Exit", count: violationTypeCounts.FULLSCREEN_EXIT, color: "#EC4899" },
+        { name: "Copy Attempt", count: violationTypeCounts.COPY_ATTEMPT, color: "#3B82F6" },
+        {
+          name: "Context Menu",
+          count: violationTypeCounts.CONTEXT_MENU,
+          color: "#0EA5E9",
+        },
+        { name: "Cut Attempt", count: violationTypeCounts.CUT_ATTEMPT, color: "#14B8A6" },
       ],
       recentViolations: violationLogs,
     });

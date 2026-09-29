@@ -1,59 +1,41 @@
-import { User } from "../models/User.js";
-import { Department } from "../models/Department.js";
-import { Resource } from "../models/Resource.js";
 import { Course } from "../models/Course.js";
 import { Enrollment } from "../models/Enrollment.js";
-import { Certificate } from "../models/Certificate.js";
 import { Visitor } from "../models/Visitor.js";
-import { TestAttempt } from "../models/TestAttempt.js";
+import { getKpiSummary, getDepartmentDistribution, getActivityTelemetry, __internal as dashboardInternal } from "./adminDashboardService.js";
 
+export { getActivityTelemetry };
+
+/** Mongo `$dateToString` timezone derived from the server offset, so `$dateToString`
+ * day buckets match the local calendar day used by `toLocalDay`. */
+export function localTimezone() {
+  return dashboardInternal.localTimezone();
+}
+
+/**
+ * Overview summary for the analytics dashboard. The nested `kpis` object is the
+ * authoritative shape; the flat keys are retained for backward compatibility
+ * with existing consumers.
+ */
 export async function getOverviewSummary() {
-  const [
-    totalStudents,
-    totalTeachers,
-    totalDepartments,
-    totalResources,
-    totalCourses,
-    certificatesIssued,
-  ] = await Promise.all([
-    User.countDocuments({ role: "student" }),
-    User.countDocuments({ role: "teacher" }),
-    Department.countDocuments({ isActive: true }),
-    Resource.countDocuments({ isPublished: true }),
-    Course.countDocuments({ isPublished: true }),
-    Certificate.countDocuments({ status: "valid" }),
-  ]);
+  const kpis = await getKpiSummary();
 
   return {
-    totalStudents,
-    totalTeachers,
-    totalDepartments,
-    totalResources,
-    totalCourses,
-    certificatesIssued,
+    kpis,
+    totalStudents: kpis.students.total,
+    totalTeachers: kpis.teachers.total,
+    totalDepartments: kpis.teachers.departments,
+    totalResources: kpis.resources.total,
+    totalCourses: kpis.courses.total,
+    certificatesIssued: kpis.certificates.issued,
+    visitorsToday: kpis.visitors.today,
+    visitorGrowth: kpis.visitors.growthPercent,
+    activeOnline: kpis.activeUsers.count,
   };
 }
 
 export async function getDepartmentAnalytics() {
-  const departments = await Department.find({ isActive: true }).select("_id code name");
-
-  const results = await Promise.all(
-    departments.map(async (dept) => {
-      const [students, resources] = await Promise.all([
-        User.countDocuments({ role: "student", departmentId: dept._id }),
-        Resource.countDocuments({ departmentId: dept._id }),
-      ]);
-      return {
-        departmentId: dept._id,
-        code: dept.code,
-        name: dept.name,
-        students,
-        resources,
-      };
-    })
-  );
-
-  return results;
+  const { departments } = await getDepartmentDistribution();
+  return departments;
 }
 
 export async function getCourseAnalytics() {
@@ -84,37 +66,101 @@ export async function getCourseAnalytics() {
   return results;
 }
 
-export async function getVisitorAnalytics(days = 7) {
-  const visitors = await Visitor.find().sort({ date: -1 }).limit(days);
-  return visitors.reverse();
+/**
+ * The counter runs on local calendar days, matching the admin dashboard, so the
+ * two agree on what "today" means. `toISOString()` would bucket by UTC and drift
+ * by a day either side of midnight.
+ */
+function toLocalDay(input) {
+  const date = input instanceof Date ? input : new Date(input);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-export async function recordVisitorHit(type = "visit") {
-  const today = new Date().toISOString().split("T")[0];
-  let visitor = await Visitor.findOne({ date: today });
-  if (!visitor) {
-    visitor = new Visitor({ date: today, totalVisits: 1 });
-  } else {
-    visitor.totalVisits += 1;
-    if (type === "resource") visitor.resourceViews += 1;
-    if (type === "course") visitor.courseViews += 1;
-    if (type === "announcement") visitor.announcementViews += 1;
-  }
-  await visitor.save();
+const VISIT_TYPE_FIELDS = {
+  resource: "resourceViews",
+  course: "courseViews",
+  announcement: "announcementViews",
+};
 
-  const all = await Visitor.aggregate([
-    { $group: { _id: null, total: { $sum: "$totalVisits" } } }
+/** Daily total for every tracked day, plus the running all-time count. */
+async function visitorTotals() {
+  const [allTime, globalRow] = await Promise.all([
+    Visitor.aggregate([
+      { $match: { date: { $exists: true } } },
+      { $group: { _id: null, total: { $sum: "$totalVisits" } } },
+    ]),
+    Visitor.findOne({ key: "global_counter" }).select("totalVisits"),
   ]);
-  const total = all[0]?.total || visitor.totalVisits || 1;
-  return { count: total, today: visitor.totalVisits, isLive: true };
+
+  return {
+    count: allTime[0]?.total || 0,
+    allTime: globalRow?.totalVisits || 0,
+  };
+}
+
+export async function getVisitorAnalytics(days = 7) {
+  const keys = [];
+  const now = new Date();
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    keys.push(toLocalDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset)));
+  }
+
+  const docs = await Visitor.find({ date: { $in: keys } })
+    .select("date totalVisits resourceViews courseViews announcementViews");
+  const byDate = new Map(docs.map((doc) => [doc.date, doc]));
+
+  // Dense, zero-filled and oldest-first so a chart never has gaps.
+  return keys.map((key) => {
+    const doc = byDate.get(key) || {};
+    return {
+      date: key,
+      totalVisits: doc.totalVisits || 0,
+      resourceViews: doc.resourceViews || 0,
+      courseViews: doc.courseViews || 0,
+      announcementViews: doc.announcementViews || 0,
+    };
+  });
+}
+
+/** Atomic per-day + per-type increment. */
+export async function recordVisitorHit(type = "visit") {
+  const now = new Date();
+  const today = toLocalDay(now);
+  const field = VISIT_TYPE_FIELDS[type];
+
+  const [daily, global] = await Promise.all([
+    Visitor.findOneAndUpdate(
+      { date: today },
+      {
+        $inc: { totalVisits: 1, ...(field ? { [field]: 1 } : {}) },
+        $set: { updatedAt: now },
+        $setOnInsert: { date: today },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    ),
+    Visitor.findOneAndUpdate(
+      { key: "global_counter" },
+      {
+        $inc: { totalVisits: 1 },
+        $set: { updatedAt: now },
+        $setOnInsert: { key: "global_counter" },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    ),
+  ]);
+
+  return { count: global.totalVisits, today: daily.totalVisits, isLive: true };
 }
 
 export async function getVisitorTotals() {
-  const today = new Date().toISOString().split("T")[0];
-  const todayDoc = await Visitor.findOne({ date: today });
-  const all = await Visitor.aggregate([
-    { $group: { _id: null, total: { $sum: "$totalVisits" } } }
+  const today = toLocalDay(new Date());
+  const [totals, todayDoc] = await Promise.all([
+    visitorTotals(),
+    Visitor.findOne({ date: today }).select("totalVisits"),
   ]);
-  const total = all[0]?.total || todayDoc?.totalVisits || 0;
-  return { count: total, today: todayDoc?.totalVisits || 0, isLive: true };
+
+  return { ...totals, today: todayDoc?.totalVisits || 0, isLive: true };
 }

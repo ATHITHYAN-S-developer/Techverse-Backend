@@ -1,5 +1,6 @@
 import { User } from "../models/User.js";
 import { Point } from "../models/Point.js";
+import { Certificate } from "../models/Certificate.js";
 import { getPagination } from "../utils/pagination.js";
 
 /**
@@ -85,6 +86,14 @@ export async function getLeaderboard(req, res, next) {
       User.countDocuments(query),
     ]);
 
+    // Certificate counts are not on the User document, so fetch them in one
+    // aggregate rather than issuing a query per ranked user.
+    const certCounts = await Certificate.aggregate([
+      { $match: { studentId: { $in: users.map((u) => u._id) } } },
+      { $group: { _id: "$studentId", count: { $sum: 1 } } },
+    ]);
+    const certCountBy = new Map(certCounts.map((c) => [String(c._id), c.count]));
+
     const leaderboard = users.map((u, idx) => ({
       rank: skip + idx + 1,
       _id: u._id,
@@ -94,6 +103,8 @@ export async function getLeaderboard(req, res, next) {
       points: u.points?.totalPoints || 0,
       level: u.points?.level || 1,
       streak: u.streak?.currentStreak || 0,
+      longestStreak: u.streak?.longestStreak || 0,
+      certificatesEarned: certCountBy.get(String(u._id)) || 0,
       profileImage: u.profileImage,
     }));
 
@@ -123,7 +134,7 @@ export async function getPointsHistory(req, res, next) {
     const userId = req.user._id;
 
     const [history, total] = await Promise.all([
-      Point.find({ userId })
+      Point.find({ studentId: userId })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),

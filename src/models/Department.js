@@ -23,6 +23,11 @@ const departmentSchema = new mongoose.Schema(
       type: String,
       default: "Layers",
     },
+    color: {
+      type: String,
+      default: "#64748b",
+      trim: true,
+    },
     hodName: {
       type: String,
       default: "",

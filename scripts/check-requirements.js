@@ -136,7 +136,7 @@ function probe(exes) {
       windowsHide: true,
       shell: process.platform === "win32",
     });
-    if (res.error) continue;
+if (res.error) continue;
     if (res.status !== 0) continue;
     const text = (res.stdout || "").split("\n")[0].trim();
     if (!text && res.stderr) {
@@ -214,7 +214,7 @@ export function main() {
 
   log(`\n${BOLD}Database${RESET}`);
   const mongoUri = loadEnvVar("MONGO_URI");
-  const mongoProbes = ["mongod"];
+const mongoProbes = ["mongod"];
   if (process.platform === "win32") {
     try {
       const serverDir = "C:\\Program Files\\MongoDB\\Server";
@@ -229,8 +229,22 @@ export function main() {
     } catch (e) {}
   }
   const mongo = probe(mongoProbes);
+  let mongoPortOpen = false;
+  if (!mongo.found && process.platform === "win32") {
+    try {
+      const tcpCheck = spawnSync("powershell", ["-NoProfile", "-Command", "try { $t = New-Object System.Net.Sockets.TcpClient('127.0.0.1', 27017); $t.Close(); exit 0 } catch { exit 1 }"], {
+        encoding: "utf8",
+        timeout: 4000,
+        windowsHide: true,
+      });
+      mongoPortOpen = tcpCheck.status === 0;
+    } catch (e) {}
+  }
+
   if (mongo.found) {
     ok(`[mongod] local MongoDB server — ${mongo.version}`);
+  } else if (mongoPortOpen) {
+    ok(`[mongod] local MongoDB service active on 127.0.0.1:27017`);
   } else if (isLocalMongoUri(mongoUri)) {
     fail(`[mongod] local MongoDB server — NOT FOUND`);
     blockers.push({ id: "mongod", label: "MongoDB (mongod) — MONGO_URI points at localhost" });

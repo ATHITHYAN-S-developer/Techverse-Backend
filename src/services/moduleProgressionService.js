@@ -7,6 +7,7 @@ import { Certificate } from "../models/Certificate.js";
 import { User } from "../models/User.js";
 import { generateCertificateNumber } from "../utils/generateId.js";
 import { awardPoints } from "./pointsService.js";
+import { updateStreakOnActivity } from "./streakService.js";
 
 const SEGMENT_DURATION_SECONDS = 5; // Each discrete slice is 5 seconds
 const MIN_WATCH_PERCENTAGE = 40; // 40% unique watch requirement
@@ -458,6 +459,13 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
       });
     } catch (e) {
       console.warn("Points recording error:", e.message);
+    }
+
+    // A passed module test is real study activity, so it advances the streak too.
+    try {
+      await updateStreakOnActivity(studentId);
+    } catch (e) {
+      console.warn("Streak update error:", e.message);
     }
   } else {
     // Test Failed (< 50%) -> Next module stays locked, allow retry

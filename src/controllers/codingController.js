@@ -267,7 +267,7 @@ export async function submitCode(req, res, next) {
       if (violations.length === 0) {
         pointsAwarded += test.bonusPoints || 10; // Bonus for clean zero-violation run
       }
-      await awardPoints(studentId, pointsAwarded, `Solved Coding Problem: ${problem.title}`);
+      await awardPoints(studentId, pointsAwarded, "coding_challenge", `Solved Coding Problem: ${problem.title}`);
       await updateStreak(studentId);
     }
 

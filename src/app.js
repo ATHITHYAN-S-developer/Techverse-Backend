@@ -45,6 +45,28 @@ app.use(
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
+// HTTP Request Logger Middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  const { method, originalUrl } = req;
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    const status = res.statusCode;
+    const color =
+      status >= 500
+        ? "\x1b[31m"
+        : status >= 400
+        ? "\x1b[33m"
+        : status >= 300
+        ? "\x1b[36m"
+        : "\x1b[32m";
+    console.log(
+      `[${new Date().toLocaleTimeString()}] ${color}${method}\x1b[0m ${originalUrl} -> ${color}${status}\x1b[0m (${duration}ms)`
+    );
+  });
+  next();
+});
+
 // Static uploads serving
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 

@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import { User } from "../models/User.js";
 import { ENV } from "../config/env.js";
 import { logAuditEvent } from "../services/auditService.js";
+import { matchesDateOfBirth } from "../utils/dateOfBirth.js";
 
 // Generates signed JWT token
 function generateToken(userId, role) {
@@ -11,9 +12,29 @@ function generateToken(userId, role) {
 }
 
 /**
+ * Validate the secret a caller supplied for a given role.
+ *
+ * Students authenticate with their date of birth; teachers and admins use the
+ * stored plain-text password. Students are matched on `dateOfBirth` only - a
+ * student's stored password is not a login route, so a leaked shared roster
+ * password cannot be used to impersonate a student.
+ */
+function isCredentialValid(role, user, secret) {
+  if (role === "student") {
+    return matchesDateOfBirth(user.dateOfBirth, secret);
+  }
+  return user.comparePassword(secret);
+}
+
+/**
  * @route   POST /api/auth/login
  * @desc    Authenticate user & issue JWT
  * @access  Public
+ *
+ * Students sign in with their register number and date of birth. Staff and
+ * admins sign in with their ID/username and a password. The frontend posts the
+ * secret in the same `password` field for every role, so the credential is
+ * interpreted according to the role.
  */
 export async function login(req, res, next) {
   try {
@@ -28,7 +49,10 @@ export async function login(req, res, next) {
     if (!identifier || !password) {
       return res.status(400).json({
         success: false,
-        message: "Please provide both identifier and password.",
+        message:
+          role === "student"
+            ? "Please provide both your register number and date of birth."
+            : "Please provide both identifier and password.",
         code: "CREDENTIALS_REQUIRED",
       });
     }
@@ -64,13 +88,19 @@ export async function login(req, res, next) {
       });
     }
 
-    // Direct plain-text password comparison
-    const isMatch = user.comparePassword(password);
-    if (!isMatch) {
+    if (!isCredentialValid(role, user, password)) {
+      const hint =
+        role === "student" && !user.dateOfBirth
+          ? " No date of birth is on file for this register number - please contact the administrator."
+          : "";
+
       return res.status(401).json({
         success: false,
-        message: "Incorrect password. Please verify and try again.",
-        code: "INVALID_PASSWORD",
+        message:
+          role === "student"
+            ? `Incorrect date of birth.${hint}`
+            : "Incorrect password. Please verify and try again.",
+        code: role === "student" ? "INVALID_DATE_OF_BIRTH" : "INVALID_PASSWORD",
       });
     }
 
