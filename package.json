@@ -10,6 +10,7 @@
     "prestart": "node scripts/check-requirements.js",
     "start": "node src/server.js",
     "seed": "node src/seed/seedDatabase.js",
+    "seed:placement": "node src/scripts/seedPlacementEvents.js",
     "import:students": "node src/scripts/importStudents.js",
     "seed:enrollments": "node src/scripts/seedEnrollments.js",
     "backfill": "node src/scripts/backfillGamification.js",

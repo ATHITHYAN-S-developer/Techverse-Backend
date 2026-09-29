@@ -6,7 +6,7 @@ import fs from "fs";
 const baseUploadDir = path.join(process.cwd(), "uploads");
 
 // Ensure subdirectories exist
-const subDirs = ["announcements", "courses", "resources"];
+const subDirs = ["announcements", "courses", "resources", "placement-events"];
 subDirs.forEach((sub) => {
   const dir = path.join(baseUploadDir, sub);
   if (!fs.existsSync(dir)) {
@@ -41,6 +41,18 @@ export const uploadAnnouncementImage = multer({
       cb(null, true);
     } else {
       cb(new Error("Only image files (JPG, PNG, WebP) are allowed for announcement banners!"), false);
+    }
+  },
+});
+
+export const uploadPlacementPoster = multer({
+  storage: createDynamicStorage("placement-events"),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files (JPG, PNG, WebP) are allowed for placement event posters!"), false);
     }
   },
 });
