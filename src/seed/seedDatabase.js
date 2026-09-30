@@ -191,8 +191,10 @@ async function seedDatabase() {
         role: "student",
         registerNumber: "732924CSE001",
         password: "student123", // Plain-text
+        // Students log in with register number + date of birth (UTC midnight).
         name: "Athithya R",
         email: "732924cse001@vcet.ac.in",
+        dateOfBirth: new Date(Date.UTC(2007, 8, 20)),
         departmentId: deptMap["CSE"],
         classId: classMap["cse_3a"],
         points: { totalPoints: 1240, level: 4 },
@@ -206,6 +208,7 @@ async function seedDatabase() {
         password: "student123",
         name: "Kavya Dharshini P",
         email: "732924cse042@vcet.ac.in",
+        dateOfBirth: new Date(Date.UTC(2007, 4, 11)),
         departmentId: deptMap["CSE"],
         classId: classMap["cse_3a"],
         points: { totalPoints: 1080, level: 3 },
@@ -1761,7 +1764,8 @@ async function seedDatabase() {
     console.log("========================================================");
     console.log("👤 Admin:   username: admin           | password: admin123");
     console.log("👨‍🏫 Teacher: staffId:  VCET-FAC-CSE-104 | password: faculty123");
-    console.log("🎓 Student: regNumber: 732924CSE001   | password: student123");
+    console.log("🎓 Student: regNumber: 732924CSE001   | dateOfBirth: 2007-09-20 (dd/MM/yyyy: 20/09/2007)");
+    console.log("🎓 Student: regNumber: 732924CSE042   | dateOfBirth: 2007-05-11 (dd/MM/yyyy: 11/05/2007)");
     console.log("========================================================\n");
 
     process.exit(0);
