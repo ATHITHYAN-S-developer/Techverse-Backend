@@ -83,7 +83,7 @@
                      "AI \u0026 DS",
                      "Final Year"
                  ],
-        "poster":  "/uploads/announcements/hexaware-placement-2026.jpg",
+        "poster":  "/images/hexaware-placement-2026.jpg",
         "linkUrl":  "https://www.hexaware.com/careers/",
         "linkText":  "Hexaware Careers",
         "postedAt":  "2026-09-26T07:00:00.000Z",
@@ -110,7 +110,7 @@
                      "AI \u0026 DS",
                      "Technical"
                  ],
-        "poster":  "/uploads/announcements/zoho-placement-2026.jpg",
+        "poster":  "/images/zoho-placement-2026.jpg",
         "linkUrl":  "https://www.zoho.com/careers/",
         "linkText":  "Zoho Careers",
         "postedAt":  "2026-09-26T06:00:00.000Z",
@@ -137,7 +137,7 @@
                      "AI \u0026 DS",
                      "Final Year"
                  ],
-        "poster":  "/uploads/announcements/tcs-placement-2026.jpg",
+        "poster":  "/images/tcs-placement-2026.jpg",
         "linkUrl":  "https://www.tcs.com/careers",
         "linkText":  "TCS Careers",
         "postedAt":  "2026-09-26T05:00:00.000Z",
@@ -162,7 +162,7 @@
                      "CSE",
                      "IT"
                  ],
-        "poster":  "",
+        "poster":  "/images/cognizant-placement-2026.jpg",
         "linkUrl":  "https://careers.cognizant.com",
         "linkText":  "Cognizant Careers",
         "postedAt":  "2026-09-25T08:00:00.000Z",
@@ -186,7 +186,7 @@
                      "ASE",
                      "All Branches"
                  ],
-        "poster":  "",
+        "poster":  "/images/accenture-placement-2026.jpg",
         "linkUrl":  "https://www.accenture.com/careers",
         "linkText":  "Accenture Careers",
         "postedAt":  "2026-09-25T07:00:00.000Z",
@@ -211,7 +211,7 @@
                      "High Package",
                      "Dream Offer"
                  ],
-        "poster":  "",
+        "poster":  "/images/amazon-placement-2026.jpg",
         "linkUrl":  "https://www.amazon.jobs",
         "linkText":  "Amazon Jobs",
         "postedAt":  "2026-09-24T05:00:00.000Z",
@@ -236,7 +236,7 @@
                      "ECE",
                      "EEE"
                  ],
-        "poster":  "",
+        "poster":  "/images/bosch-placement-2026.jpg",
         "linkUrl":  "https://www.bosch.com/careers",
         "linkText":  "Bosch Careers",
         "postedAt":  "2026-09-24T04:00:00.000Z",
@@ -262,7 +262,7 @@
                      "Civil",
                      "Mechanical"
                  ],
-        "poster":  "",
+        "poster":  "/images/lt-placement-2026.jpg",
         "linkUrl":  "https://www.larsentoubro.com/careers",
         "linkText":  "L\u0026T Careers",
         "postedAt":  "2026-09-23T09:00:00.000Z",
@@ -286,7 +286,7 @@
                      "NeuralHack",
                      "Internship"
                  ],
-        "poster":  "",
+        "poster":  "/images/virtusa-placement-2026.jpg",
         "linkUrl":  "https://www.virtusa.com/careers",
         "linkText":  "Virtusa Careers",
         "postedAt":  "2026-09-23T08:00:00.000Z",
@@ -310,7 +310,7 @@
                      "Specialist Programmer",
                      "High Package"
                  ],
-        "poster":  "",
+        "poster":  "/images/infosys-placement-2026.jpg",
         "linkUrl":  "https://www.infosys.com/careers",
         "linkText":  "Infosys Careers",
         "postedAt":  "2026-09-22T05:00:00.000Z",
