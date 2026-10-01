@@ -37,8 +37,10 @@ export async function generateCourseCertificate(studentIdOrParams, courseIdParam
 
   const resolvedCourseId = course._id;
 
-  // 2. Check existing certificate in MongoDB
-  const existing = await Certificate.findOne({ studentId, courseId: resolvedCourseId });
+  // 2. Check existing course completion certificate in MongoDB
+  //    Must scope by type: module appreciation certificates share the same
+  //    { studentId, courseId } and would otherwise suppress the course cert.
+  const existing = await Certificate.findOne({ studentId, courseId: resolvedCourseId, type: "course_completion" });
   if (existing) {
     return {
       certificate: existing,
@@ -75,6 +77,7 @@ export async function generateCourseCertificate(studentIdOrParams, courseIdParam
     certificateNumber: certNumber,
     studentId,
     courseId: resolvedCourseId,
+    type: "course_completion",
     studentName: student.name,
     registerNumber: student.registerNumber || "VCET-STU",
     courseName: course.title,

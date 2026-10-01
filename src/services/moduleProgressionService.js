@@ -8,6 +8,7 @@ import { User } from "../models/User.js";
 import { generateCertificateNumber } from "../utils/generateId.js";
 import { awardPoints } from "./pointsService.js";
 import { updateStreakOnActivity } from "./streakService.js";
+import { issueCertificate } from "./certificateService.js";
 
 const SEGMENT_DURATION_SECONDS = 5; // Each discrete slice is 5 seconds
 const MIN_WATCH_PERCENTAGE = 40; // 40% unique watch requirement
@@ -395,6 +396,7 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
   const course = await Course.findById(courseId);
 
   let certificate = null;
+  let courseCertificate = null;
 
   if (passed) {
     // 3. Mark module completed
@@ -438,14 +440,48 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     progress.certificateId = existingCert._id;
 
     // 5. Update Enrollment
-    await Enrollment.findOneAndUpdate(
+    const enrollment = await Enrollment.findOneAndUpdate(
       { studentId, courseId },
       {
         $addToSet: { completedModules: moduleDoc._id },
         $set: { lastActivityAt: new Date() },
       },
-      { upsert: true }
+      { upsert: true, new: true }
     );
+
+    // 5a. Recompute progress against the published module count. Without this the
+    //     enrollment stays at its previous percentage and a finished course is
+    //     never recognised as complete.
+    const totalModules = await CourseModule.countDocuments({ courseId, isPublished: true });
+    if (totalModules > 0) {
+      enrollment.progressPercentage = Math.min(
+        Math.round((enrollment.completedModules.length / totalModules) * 100),
+        100
+      );
+    }
+
+    // 5b. Final module passed -> issue the course completion certificate. This is
+    //     the path students actually take, so the course cert has to be minted
+    //     here too, not only from the standalone mark-complete endpoint.
+    if (totalModules > 0 && enrollment.progressPercentage >= 100 && enrollment.status !== "completed") {
+      enrollment.status = "completed";
+      enrollment.completedAt = enrollment.completedAt || new Date();
+
+      try {
+        const result = await issueCertificate({
+          studentId,
+          courseId,
+          score: scorePercentage,
+        });
+        courseCertificate = result.certificate || null;
+      } catch (certErr) {
+        console.warn("Course completion certificate issue notice:", certErr.message);
+      }
+    } else {
+      enrollment.progressPercentage = enrollment.progressPercentage || 0;
+    }
+
+    await enrollment.save();
 
     // Award Points (+50 test pass XP, +100 module completion XP)
     try {
@@ -484,6 +520,19 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     status: progress.status,
     attemptNumber: progress.testAttemptsCount,
     questions: gradedQuestions,
+    courseCertificate: courseCertificate
+      ? {
+          _id: courseCertificate._id,
+          certificateNumber: courseCertificate.certificateNumber,
+          studentName: courseCertificate.studentName,
+          registerNumber: courseCertificate.registerNumber,
+          courseName: courseCertificate.courseName,
+          score: courseCertificate.score,
+          grade: courseCertificate.grade,
+          issuedAt: courseCertificate.issuedAt,
+          verificationCode: courseCertificate.verificationCode,
+        }
+      : null,
     certificate: certificate ? {
       _id: certificate._id,
       certificateNumber: certificate.certificateNumber,
