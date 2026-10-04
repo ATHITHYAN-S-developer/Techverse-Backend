@@ -16,10 +16,10 @@ export function checkDepartmentAccess(resourceType = "body") {
         return next();
       }
 
-      if (req.user?.role !== "teacher") {
+      if (req.user?.role !== "teacher" && req.user?.role !== "faculty" && req.user?.role !== "hod") {
         return res.status(403).json({
           success: false,
-          message: "Only faculty or administrators can perform departmental modifications.",
+          message: "Only faculty, HOD, or administrators can perform departmental modifications.",
           code: "ROLE_UNAUTHORIZED",
         });
       }
@@ -132,10 +132,10 @@ function resolveTeacherDepartment(req, res) {
     return { passed: true };
   }
 
-  if (req.user?.role !== "teacher") {
+  if (req.user?.role !== "teacher" && req.user?.role !== "faculty" && req.user?.role !== "hod") {
     res.status(403).json({
       success: false,
-      message: "Only faculty or administrators can perform departmental modifications.",
+      message: "Only faculty, HOD, or administrators can perform departmental modifications.",
       code: "ROLE_UNAUTHORIZED",
     });
     return { passed: false };
@@ -160,14 +160,14 @@ function resolveTeacherDepartment(req, res) {
  */
 export async function checkModuleCourseOwnership(req, res, next) {
   try {
-    if (req.user?.role === "admin") {
+    if (req.user?.role === "admin" || req.user?.role === "hod") {
       return next();
     }
 
-    if (req.user?.role !== "teacher") {
+    if (req.user?.role !== "teacher" && req.user?.role !== "faculty") {
       return res.status(403).json({
         success: false,
-        message: "Only faculty or administrators can modify course modules.",
+        message: "Only faculty, HOD, or administrators can modify course modules.",
         code: "ROLE_UNAUTHORIZED",
       });
     }
@@ -204,13 +204,15 @@ export async function checkModuleCourseOwnership(req, res, next) {
     }
 
     const isOwner =
+      req.user.role === "admin" ||
+      req.user.role === "hod" ||
       (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
       (course.createdBy && course.createdBy.toString() === req.user._id.toString());
 
     if (!isOwner) {
       return res.status(403).json({
         success: false,
-        message: "You can only manage modules for courses assigned to or created by yourself.",
+        message: "You can only manage modules for courses assigned to you by the HOD or Admin.",
         code: "COURSE_OWNERSHIP_DENIED",
       });
     }

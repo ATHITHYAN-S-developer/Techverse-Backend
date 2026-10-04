@@ -6,7 +6,6 @@ import { Enrollment } from "../models/Enrollment.js";
 import { Certificate } from "../models/Certificate.js";
 import { User } from "../models/User.js";
 import { generateCertificateNumber } from "../utils/generateId.js";
-import { awardPoints } from "./pointsService.js";
 import { updateStreakOnActivity } from "./streakService.js";
 import { issueCertificate } from "./certificateService.js";
 
@@ -59,26 +58,44 @@ export async function isModuleUnlockedForStudent(studentId, courseId, moduleNumb
   const isCourseDone = await isCourseCompletedForStudent(studentId, courseId);
   if (isCourseDone) return true;
 
-  // Check if previous module (moduleNumber - 1) has a progress record
-  const prevProgress = await ModuleProgress.findOne({
-    studentId,
-    courseId,
-    moduleNumber: moduleNumber - 1,
-  });
-
-  if (prevProgress) {
-    return Boolean(prevProgress.testPassed);
-  }
-
-  // Fallback to Enrollment.completedModules if no ModuleProgress record exists yet
+  // 1. Find previous module doc in this course
   const prevModule = await CourseModule.findOne({ courseId, moduleNumber: moduleNumber - 1 });
   if (prevModule) {
+    const prevProgress = await ModuleProgress.findOne({
+      studentId,
+      moduleId: prevModule._id,
+    });
+
+    if (prevProgress) {
+      const isPrevPassed = Boolean(
+        prevProgress.testPassed ||
+        prevProgress.status === "module_completed" ||
+        (prevProgress.videoRequirementMet && (!prevModule.mcqs || prevModule.mcqs.length === 0))
+      );
+      if (isPrevPassed) return true;
+    }
+
     const enrollment = await Enrollment.findOne({
       studentId,
       courseId,
       completedModules: prevModule._id,
     });
     if (enrollment) return true;
+  }
+
+  // 2. Check if previous module (moduleNumber - 1) has a progress record by moduleNumber
+  const prevProgressByNum = await ModuleProgress.findOne({
+    studentId,
+    courseId,
+    moduleNumber: moduleNumber - 1,
+  });
+
+  if (prevProgressByNum) {
+    return Boolean(
+      prevProgressByNum.testPassed ||
+      prevProgressByNum.status === "module_completed" ||
+      prevProgressByNum.videoRequirementMet
+    );
   }
 
   return false;
@@ -122,9 +139,15 @@ export async function getOrCreateModuleProgress(studentId, courseId, moduleId) {
       videoRequirementMet: isCourseDone,
       testUnlocked: isCourseDone,
     });
-  } else if (isCourseDone) {
-    progress.videoRequirementMet = true;
-    progress.testUnlocked = true;
+  } else {
+    if (isCourseDone) {
+      progress.videoRequirementMet = true;
+      progress.testUnlocked = true;
+    }
+    if (isUnlocked && progress.status === "video_locked") {
+      progress.status = "video_in_progress";
+      await progress.save();
+    }
   }
 
   return { progress, moduleDoc, isUnlocked, isCourseDone };
@@ -280,8 +303,9 @@ export async function getCourseProgressionMap(studentId, courseId) {
       computedStatus = "video_in_progress";
     }
 
-    const videoReqMet = isCourseDone || Boolean(p?.videoRequirementMet);
-    const testUnlocked = isCourseDone || Boolean(p?.testUnlocked && isUnlocked) || Boolean(p?.videoRequirementMet);
+    const isVideoMandatory = Boolean(m.hasVideo && m.isVideoMandatory);
+    const videoReqMet = isCourseDone || !isVideoMandatory || Boolean(p?.videoRequirementMet);
+    const testUnlocked = isCourseDone || (!isVideoMandatory && isUnlocked) || Boolean(p?.testUnlocked && isUnlocked) || Boolean(p?.videoRequirementMet);
 
     return {
       moduleId: m._id,
@@ -337,8 +361,9 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     throw err;
   }
 
-  // 1. Server-Side Guard: Verify video watch requirement (Bypassed if course is already completed or module was passed)
-  if (!isCourseDone && !progress.testPassed && (!progress.videoRequirementMet || progress.watchPercentage < MIN_WATCH_PERCENTAGE)) {
+  // 1. Server-Side Guard: Verify video watch requirement (Only if module hasVideo AND isVideoMandatory is true)
+  const isVideoMandatory = Boolean(moduleDoc.hasVideo && moduleDoc.isVideoMandatory);
+  if (isVideoMandatory && !isCourseDone && !progress.testPassed && (!progress.videoRequirementMet || progress.watchPercentage < MIN_WATCH_PERCENTAGE)) {
     const err = new Error(`Test Locked: You must watch at least ${MIN_WATCH_PERCENTAGE}% of the tutorial video before taking the test (Current: ${progress.watchPercentage}%).`);
     err.status = 403;
     err.code = "VIDEO_WATCH_REQUIREMENT_NOT_MET";
@@ -482,20 +507,6 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     }
 
     await enrollment.save();
-
-    // Award Points (+50 test pass XP, +100 module completion XP)
-    try {
-      await awardPoints({
-        studentId,
-        points: 150,
-        type: "module_completion",
-        description: `Passed Module ${moduleDoc.moduleNumber} Test with score ${scorePercentage}%`,
-        referenceId: existingCert._id.toString(),
-        courseId,
-      });
-    } catch (e) {
-      console.warn("Points recording error:", e.message);
-    }
 
     // A passed module test is real study activity, so it advances the streak too.
     try {

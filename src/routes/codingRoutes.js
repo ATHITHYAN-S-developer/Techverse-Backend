@@ -26,6 +26,7 @@ const codingRateLimit = (windowMs, max, message) =>
     max,
     standardHeaders: true,
     legacyHeaders: false,
+    validate: { keyGeneratorIpFallback: false },
     keyGenerator: (req) => (req.user?._id ? String(req.user._id) : req.ip),
     handler: (req, res) => {
       const resetAt = req.rateLimit?.resetTime;

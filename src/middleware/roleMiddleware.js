@@ -1,4 +1,11 @@
 export function authorize(...roles) {
+  const allowed = new Set();
+  roles.forEach((r) => {
+    allowed.add(r);
+    if (r === "faculty") allowed.add("teacher");
+    if (r === "teacher") allowed.add("faculty");
+  });
+
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
@@ -8,7 +15,7 @@ export function authorize(...roles) {
       });
     }
 
-    if (!roles.includes(req.user.role)) {
+    if (!allowed.has(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: `Forbidden: You do not have permission to access this endpoint (Requires role: ${roles.join(" or ")}).`,

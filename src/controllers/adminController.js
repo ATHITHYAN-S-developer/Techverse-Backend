@@ -14,7 +14,13 @@ export async function getUsers(req, res, next) {
     const { page, limit, skip } = getPagination(req.query, 20);
 
     const query = {};
-    if (role) query.role = role;
+    if (role) {
+      if (role === "faculty" || role === "teacher") {
+        query.role = { $in: ["faculty", "teacher", "hod"] };
+      } else {
+        query.role = role;
+      }
+    }
     if (isActive !== undefined) query.isActive = isActive === "true";
 
     if (departmentId) {

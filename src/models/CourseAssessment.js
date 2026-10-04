@@ -29,7 +29,7 @@ const questionSchema = new mongoose.Schema(
   { _id: true }
 );
 
-const dailyTestSchema = new mongoose.Schema(
+const courseAssessmentSchema = new mongoose.Schema(
   {
     courseId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -39,10 +39,6 @@ const dailyTestSchema = new mongoose.Schema(
     moduleId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "CourseModule",
-    },
-    day: {
-      type: Number,
-      default: 1,
     },
     title: {
       type: String,
@@ -62,14 +58,6 @@ const dailyTestSchema = new mongoose.Schema(
     passingPercentage: {
       type: Number,
       default: 60,
-    },
-    pointsReward: {
-      type: Number,
-      default: 10,
-    },
-    bonusPoints: {
-      type: Number,
-      default: 5,
     },
     durationMinutes: {
       type: Number,
@@ -114,8 +102,9 @@ const dailyTestSchema = new mongoose.Schema(
 );
 
 // Helper method to sanitize test before sending to students
-dailyTestSchema.methods.toStudentSafeObject = function () {
+courseAssessmentSchema.methods.toStudentSafeObject = function () {
   const obj = this.toObject ? this.toObject() : { ...this };
+  delete obj.day;
   if (Array.isArray(obj.questions)) {
     obj.questions = obj.questions.map((q) => {
       const sanitized = { ...q };
@@ -127,4 +116,4 @@ dailyTestSchema.methods.toStudentSafeObject = function () {
   return obj;
 };
 
-export const DailyTest = mongoose.model("DailyTest", dailyTestSchema);
+export const CourseAssessment = mongoose.model("CourseAssessment", courseAssessmentSchema, "dailytests");

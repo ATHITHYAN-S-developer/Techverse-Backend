@@ -44,10 +44,6 @@ const enrollmentSchema = new mongoose.Schema(
       type: Number,
       default: 1,
     },
-    totalPointsEarned: {
-      type: Number,
-      default: 0,
-    },
     lastActivityDate: {
       type: String, // YYYY-MM-DD
       default: () => new Date().toISOString().split("T")[0],

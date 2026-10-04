@@ -88,7 +88,8 @@ export async function createModule(req, res, next) {
       moduleNumber,
       title,
       description = "",
-      hasVideo = true,
+      hasVideo = false,
+      isVideoMandatory = false,
       hasCoding = false,
       hasMCQ = false,
       videos = [],
@@ -99,15 +100,7 @@ export async function createModule(req, res, next) {
       estimatedMinutes = 45,
     } = req.body;
 
-    // 1. Mandatory hasVideo Rule
-    if (hasVideo === false) {
-      return res.status(400).json({
-        success: false,
-        message: "❌ Video is mandatory for all course modules. hasVideo cannot be false.",
-      });
-    }
-
-    // 2. Title validation
+    // 1. Title validation
     if (!title || !title.trim()) {
       return res.status(400).json({
         success: false,
@@ -115,33 +108,34 @@ export async function createModule(req, res, next) {
       });
     }
 
-    // 3. Normalize and validate Videos (MUST have >= 1 video)
-    let processedVideos = Array.isArray(videos) && videos.length > 0 ? [...videos] : [];
+    // 2. Normalize and validate Videos if enabled
+    let processedVideos = [];
+    if (hasVideo) {
+      if (Array.isArray(videos) && videos.length > 0) {
+        processedVideos = [...videos];
+      } else if (videoUrl && videoUrl.trim()) {
+        processedVideos.push({
+          title: `${title} - Core Lecture`,
+          youtubeUrl: videoUrl.trim(),
+          youtubeVideoId: extractYouTubeVideoId(videoUrl.trim()),
+          duration: "30 mins",
+          order: 1,
+        });
+      }
 
-    // If single videoUrl was supplied instead of videos array, synthesize a video object
-    if (processedVideos.length === 0 && videoUrl && videoUrl.trim()) {
-      processedVideos.push({
-        title: `${title} - Core Lecture`,
-        youtubeUrl: videoUrl.trim(),
-        youtubeVideoId: extractYouTubeVideoId(videoUrl.trim()),
-        duration: "30 mins",
-        order: 1,
-      });
+      if (processedVideos.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `❌ Video is enabled for "${title}", but no videos were added. Please add at least one video or disable Video.`,
+        });
+      }
+
+      processedVideos = processedVideos.map((v, idx) => ({
+        ...v,
+        order: v.order || idx + 1,
+        youtubeVideoId: v.youtubeVideoId || extractYouTubeVideoId(v.youtubeUrl || ""),
+      }));
     }
-
-    if (processedVideos.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: `❌ Module "${title}" must contain at least one video.`,
-      });
-    }
-
-    // Ensure all videos have youtubeVideoId populated
-    processedVideos = processedVideos.map((v, idx) => ({
-      ...v,
-      order: v.order || idx + 1,
-      youtubeVideoId: v.youtubeVideoId || extractYouTubeVideoId(v.youtubeUrl || ""),
-    }));
 
     // 4. Coding validation if enabled
     let processedCoding = [];
@@ -190,7 +184,8 @@ export async function createModule(req, res, next) {
       moduleNumber: modNum,
       title: title.trim(),
       description: description.trim(),
-      hasVideo: true,
+      hasVideo: Boolean(hasVideo),
+      isVideoMandatory: Boolean(hasVideo && isVideoMandatory),
       hasCoding: Boolean(hasCoding),
       hasMCQ: Boolean(hasMCQ),
       order: modNum,
@@ -253,7 +248,8 @@ export async function updateModule(req, res, next) {
     const {
       title,
       description,
-      hasVideo = true,
+      hasVideo,
+      isVideoMandatory,
       hasCoding,
       hasMCQ,
       videos,
@@ -265,51 +261,47 @@ export async function updateModule(req, res, next) {
       isPublished,
     } = req.body;
 
-    // 1. Mandatory hasVideo check
-    if (hasVideo === false) {
-      return res.status(400).json({
-        success: false,
-        message: "❌ Video is mandatory for all course modules. hasVideo cannot be false.",
-      });
-    }
-
     const finalTitle = title !== undefined ? title.trim() : existing.title;
     if (!finalTitle) {
       return res.status(400).json({ success: false, message: "❌ Module title is required." });
     }
 
+    const finalHasVideo = hasVideo !== undefined ? Boolean(hasVideo) : existing.hasVideo;
     const finalHasCoding = hasCoding !== undefined ? Boolean(hasCoding) : existing.hasCoding;
     const finalHasMCQ = hasMCQ !== undefined ? Boolean(hasMCQ) : existing.hasMCQ;
 
-    // 2. Normalize and validate videos
-    let finalVideos = videos !== undefined ? videos : existing.videos;
-    if (finalVideos.length === 0 && videoUrl && videoUrl.trim()) {
-      finalVideos = [
-        {
-          title: `${finalTitle} - Video`,
-          youtubeUrl: videoUrl.trim(),
-          youtubeVideoId: extractYouTubeVideoId(videoUrl.trim()),
-          duration: "30 mins",
-          order: 1,
-        },
-      ];
-    }
+    // 2. Normalize and validate videos if enabled
+    let finalVideos = [];
+    if (finalHasVideo) {
+      finalVideos = videos !== undefined ? videos : (existing.videos || []);
+      if (finalVideos.length === 0 && videoUrl && videoUrl.trim()) {
+        finalVideos = [
+          {
+            title: `${finalTitle} - Video`,
+            youtubeUrl: videoUrl.trim(),
+            youtubeVideoId: extractYouTubeVideoId(videoUrl.trim()),
+            duration: "30 mins",
+            order: 1,
+          },
+        ];
+      }
 
-    if (!Array.isArray(finalVideos) || finalVideos.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: `❌ Module "${finalTitle}" must contain at least one video.`,
-      });
-    }
+      if (!Array.isArray(finalVideos) || finalVideos.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `❌ Video is enabled for "${finalTitle}", but no videos were added. Please add at least one video or disable Video.`,
+        });
+      }
 
-    finalVideos = finalVideos.map((v, idx) => ({
-      ...v,
-      order: v.order || idx + 1,
-      youtubeVideoId: v.youtubeVideoId || extractYouTubeVideoId(v.youtubeUrl || ""),
-    }));
+      finalVideos = finalVideos.map((v, idx) => ({
+        ...v,
+        order: v.order || idx + 1,
+        youtubeVideoId: v.youtubeVideoId || extractYouTubeVideoId(v.youtubeUrl || ""),
+      }));
+    }
 
     // 3. Coding validation
-    let finalCoding = finalHasCoding ? (codingProblems !== undefined ? codingProblems : existing.codingProblems) : [];
+    let finalCoding = finalHasCoding ? (codingProblems !== undefined ? codingProblems : (existing.codingProblems || [])) : [];
     if (finalHasCoding && (!Array.isArray(finalCoding) || finalCoding.length === 0)) {
       return res.status(400).json({
         success: false,
@@ -318,7 +310,7 @@ export async function updateModule(req, res, next) {
     }
 
     // 4. MCQ validation
-    let finalMCQs = finalHasMCQ ? (mcqs !== undefined ? mcqs : existing.mcqs) : [];
+    let finalMCQs = finalHasMCQ ? (mcqs !== undefined ? mcqs : (existing.mcqs || [])) : [];
     if (finalHasMCQ && (!Array.isArray(finalMCQs) || finalMCQs.length === 0)) {
       return res.status(400).json({
         success: false,
@@ -328,13 +320,18 @@ export async function updateModule(req, res, next) {
 
     existing.title = finalTitle;
     if (description !== undefined) existing.description = description.trim();
-    existing.hasVideo = true;
+    existing.hasVideo = finalHasVideo;
+    if (isVideoMandatory !== undefined) {
+      existing.isVideoMandatory = Boolean(finalHasVideo && isVideoMandatory);
+    } else if (!finalHasVideo) {
+      existing.isVideoMandatory = false;
+    }
     existing.hasCoding = finalHasCoding;
     existing.hasMCQ = finalHasMCQ;
     existing.videos = finalVideos;
     existing.codingProblems = finalCoding;
     existing.mcqs = finalMCQs;
-    existing.videoUrl = finalVideos[0]?.youtubeUrl || videoUrl || existing.videoUrl;
+    existing.videoUrl = finalHasVideo ? (finalVideos[0]?.youtubeUrl || videoUrl || existing.videoUrl) : "";
     if (content !== undefined) existing.content = content;
     if (estimatedMinutes !== undefined) existing.estimatedMinutes = Number(estimatedMinutes);
     if (isPublished !== undefined) existing.isPublished = Boolean(isPublished);

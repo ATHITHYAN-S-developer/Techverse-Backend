@@ -7,7 +7,7 @@ import { Enrollment } from "../models/Enrollment.js";
 import { Certificate } from "../models/Certificate.js";
 import { Visitor } from "../models/Visitor.js";
 import { TestAttempt } from "../models/TestAttempt.js";
-import { DailyTest } from "../models/DailyTest.js";
+import { CourseAssessment } from "../models/CourseAssessment.js";
 import { CodingTest } from "../models/CodingTest.js";
 import { ModuleProgress } from "../models/ModuleProgress.js";
 import { AuditLog } from "../models/AuditLog.js";
@@ -160,7 +160,6 @@ export async function getKpiSummary() {
     draftCourses,
     totalResources,
     resourcesByType,
-    totalDailyTests,
     totalCodingTests,
     totalCodingProblems,
     certificatesIssued,
@@ -173,8 +172,8 @@ export async function getKpiSummary() {
     User.countDocuments({ role: "student" }),
     User.countDocuments({ role: "student", isActive: true }),
     User.countDocuments({ role: "student", isActive: false }),
-    User.countDocuments({ role: "teacher" }),
-    User.countDocuments({ role: "teacher", isActive: true }),
+    User.countDocuments({ role: { $in: ["teacher", "faculty", "hod"] } }),
+    User.countDocuments({ role: { $in: ["teacher", "faculty", "hod"] }, isActive: true }),
     Department.countDocuments({ isActive: true }),
     Course.countDocuments({}),
     Course.countDocuments({ isPublished: true }),
@@ -184,7 +183,6 @@ export async function getKpiSummary() {
       { $group: { _id: "$type", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]),
-    DailyTest.countDocuments({}),
     CodingTest.countDocuments({}),
     countCodingProblems(),
     Certificate.countDocuments({ status: "valid" }),
@@ -235,11 +233,9 @@ export async function getKpiSummary() {
         return acc;
       }, {}),
     },
-    tests: {
-      total: totalDailyTests + totalCodingProblems,
-      dailyTests: totalDailyTests,
-      codingTests: totalCodingTests,
-      codingProblems: totalCodingProblems,
+    coding: {
+      tests: totalCodingTests,
+      problems: totalCodingProblems,
     },
     certificates: {
       issued: certificatesIssued,
@@ -259,7 +255,7 @@ export async function getKpiSummary() {
 }
 
 /**
- * Seven-day activity telemetry: logins, course progression, test attempts and
+ * Seven-day activity telemetry: logins, course progression, course-assessment attempts and
  * resource downloads. Returns exactly `days` points, zero-filled.
  */
 export async function getActivityTelemetry(days = 7) {
@@ -285,7 +281,11 @@ export async function getActivityTelemetry(days = 7) {
   const [logins, progression, attempts, downloads] = await Promise.all([
     AuditLog.aggregate(build("timestamp", "logins")),
     ModuleProgress.aggregate(build("lastWatchedAt", "courseActive")),
-    TestAttempt.aggregate(build("attemptedAt", "testAttempts")),
+    TestAttempt.aggregate([
+      { $match: { courseId: { $ne: null } } },
+      { $set: { __ts: "$attemptedAt" } },
+      { $group: { _id: dayGroup, assessmentAttempts: { $sum: 1 } } },
+    ]),
     AuditLog.aggregate([
       { $match: { timestamp: { $gte: rangeStart }, action: "DOWNLOAD" } },
       { $set: { __ts: "$timestamp" } },
@@ -293,7 +293,7 @@ export async function getActivityTelemetry(days = 7) {
     ]),
   ]);
 
-  const fields = ["logins", "courseActive", "testAttempts", "downloads"];
+  const fields = ["logins", "courseActive", "assessmentAttempts", "downloads"];
   return denseDailySeries(
     [...logins, ...progression, ...attempts, ...downloads],
     days,
@@ -318,7 +318,7 @@ export async function getDepartmentDistribution() {
       },
     ]),
     User.aggregate([
-      { $match: { role: "teacher", departmentId: { $in: ids } } },
+      { $match: { role: { $in: ["teacher", "faculty", "hod"] }, departmentId: { $in: ids } } },
       { $group: { _id: "$departmentId", teachers: { $sum: 1 } } },
     ]),
     Resource.aggregate([
@@ -630,7 +630,7 @@ export async function searchAdminEntities(rawQuery, limit = 5) {
   const safe = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const regex = { $regex: safe, $options: "i" };
 
-  const [users, courses, resources, announcements, tests, subjects, certificates] =
+  const [users, courses, resources, announcements, assessments, subjects, certificates] =
     await Promise.all([
       User.find({
         $or: [{ name: regex }, { email: regex }, { registerNumber: regex }, { staffId: regex }],
@@ -646,7 +646,7 @@ export async function searchAdminEntities(rawQuery, limit = 5) {
       Announcement.find({ $or: [{ title: regex }, { description: regex }] })
         .select("title priority category isPinned isActive")
         .limit(perGroup),
-      DailyTest.find({ title: regex }).select("title category difficulty isPublished").limit(perGroup),
+      CourseAssessment.find({ title: regex }).select("title category difficulty isPublished").limit(perGroup),
       Subject.find({ $or: [{ name: regex }, { code: regex }] })
         .select("name code semester departmentId")
         .limit(perGroup),
@@ -668,7 +668,7 @@ export async function searchAdminEntities(rawQuery, limit = 5) {
         title: u.name,
         subtitle: u.registerNumber || u.staffId || u.email,
         meta: u.role,
-        link: u.role === "teacher" ? "/admin/teachers" : u.role === "admin" ? "/admin/settings" : "/admin/students",
+        link: (u.role === "teacher" || u.role === "faculty" || u.role === "hod") ? "/admin/teachers" : u.role === "admin" ? "/admin/settings" : "/admin/students",
       })),
     });
   }
@@ -712,15 +712,15 @@ export async function searchAdminEntities(rawQuery, limit = 5) {
     });
   }
 
-  if (tests.length) {
+  if (assessments.length) {
     groups.push({
-      group: "Tests",
-      type: "test",
-      items: tests.map((t) => ({
-        id: t._id,
-        title: t.title,
-        subtitle: `${t.category} · ${t.difficulty}`,
-        link: "/admin/tests",
+      group: "Course Assessments",
+      type: "course-assessment",
+      items: assessments.map((assessment) => ({
+        id: assessment._id,
+        title: assessment.title,
+        subtitle: `${assessment.category} · ${assessment.difficulty}`,
+        link: "/admin/courses",
       })),
     });
   }

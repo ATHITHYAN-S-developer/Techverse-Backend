@@ -31,7 +31,7 @@ const optionalAuth = (req, res, next) => {
 
 router.get("/", optionalAuth, getCourses);
 router.get("/my/enrollments", authenticate, authorize("student"), getMyEnrollments);
-router.get("/my", authenticate, authorize("teacher", "admin"), getMyCourses);
+router.get("/my", authenticate, authorize("faculty", "teacher", "hod", "admin"), getMyCourses);
 router.get("/:slug/progression", authenticate, getCourseProgressionHandler);
 router.get("/:slug/modules/:moduleId/progression", authenticate, getModuleProgressionHandler);
 router.post("/:slug/modules/:moduleId/video-progress", authenticate, recordVideoProgressHandler);
@@ -42,7 +42,7 @@ router.get("/:slug", optionalAuth, getCourseBySlug);
 router.post(
   "/",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("hod", "admin"),
   uploadCourseThumbnail.single("thumbnail"),
   createCourse
 );
@@ -50,7 +50,7 @@ router.post(
 router.put(
   "/:id",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("hod", "admin"),
   uploadCourseThumbnail.single("thumbnail"),
   updateCourse
 );
@@ -58,7 +58,7 @@ router.put(
 router.delete(
   "/:id",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("hod", "admin"),
   deleteCourse
 );
 

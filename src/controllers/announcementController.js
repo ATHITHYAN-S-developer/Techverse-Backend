@@ -1,6 +1,8 @@
+import mongoose from "mongoose";
 import { Announcement } from "../models/Announcement.js";
 import { getPagination } from "../utils/pagination.js";
 import { logAuditEvent } from "../services/auditService.js";
+import { deleteUploadedFile } from "../utils/fileUpload.js";
 
 /**
  * @route   GET /api/announcements
@@ -9,10 +11,26 @@ import { logAuditEvent } from "../services/auditService.js";
  */
 export async function getAnnouncements(req, res, next) {
   try {
-    const { departmentId, targetAudience, category, priority, isPinned } = req.query;
-    const { page, limit, skip } = getPagination(req.query, 15);
+    const { departmentId, targetAudience, category, priority, isPinned, all } = req.query;
+    const { page, limit, skip } = getPagination(req.query, 100);
 
-    const query = { isActive: true };
+    const query = {};
+    if (all !== "true") {
+      query.isActive = true;
+      const now = new Date();
+      // Only show circulars whose publishDate has arrived and have not expired
+      query.publishDate = { $lte: now };
+      query.$and = [
+        ...(query.$and || []),
+        {
+          $or: [
+            { expiryDate: null },
+            { expiryDate: { $exists: false } },
+            { expiryDate: { $gt: now } },
+          ],
+        },
+      ];
+    }
 
     if (departmentId) {
       query.$or = [{ departmentId: null }, { departmentId }, { departmentId: { $exists: false } }];
@@ -128,6 +146,27 @@ export async function createAnnouncement(req, res, next) {
     if (req.user.role === "teacher") {
       targetDept = req.user.departmentId;
     }
+    if (!targetDept || targetDept === "All" || targetDept === "all" || !mongoose.Types.ObjectId.isValid(targetDept)) {
+      targetDept = null;
+    }
+
+    // Process target departments (support array or comma-separated string)
+    let depts = [];
+    if (Array.isArray(req.body.departments)) {
+      depts = req.body.departments;
+    } else if (typeof req.body.departments === "string" && req.body.departments.trim()) {
+      try {
+        const parsed = JSON.parse(req.body.departments);
+        depts = Array.isArray(parsed) ? parsed : [req.body.departments];
+      } catch {
+        depts = req.body.departments.split(",").map((s) => s.trim());
+      }
+    } else if (req.body.department) {
+      depts = req.body.department.split(",").map((s) => s.trim());
+    }
+    depts = depts.filter(Boolean);
+    if (!depts.length) depts = ["All"];
+    const primaryDeptString = depts.includes("All") ? "All" : depts.join(", ");
 
     // Handle uploaded image via Multer
     let finalImage = "";
@@ -138,19 +177,23 @@ export async function createAnnouncement(req, res, next) {
       finalImageUrl = `/uploads/announcements/${req.file.filename}`;
     }
 
+    const normalizedPriority = (priority || "normal").toLowerCase();
+
     const newAnnouncement = await Announcement.create({
       title,
       description: finalDescription,
       content: finalDescription,
       category,
-      priority: priority.toLowerCase(),
+      priority: normalizedPriority,
       image: finalImage,
       imageUrl: finalImageUrl,
-      departmentId: targetDept || null,
-      targetAudience,
+      departmentId: targetDept,
+      department: primaryDeptString,
+      departments: depts,
+      targetAudience: targetAudience || "all",
       isPinned: isPinned === "true" || isPinned === true,
-      publishDate: publishDate ? new Date(publishDate) : new Date(),
-      expiryDate: expiryDate ? new Date(expiryDate) : null,
+      publishDate: publishDate && !Number.isNaN(new Date(publishDate).getTime()) ? new Date(publishDate) : new Date(),
+      expiryDate: expiryDate && !Number.isNaN(new Date(expiryDate).getTime()) ? new Date(expiryDate) : null,
       createdBy: req.user._id,
       authorName: req.user.name,
       authorRole: req.user.role,
@@ -204,13 +247,54 @@ export async function updateAnnouncement(req, res, next) {
 
     const updates = { ...req.body };
     // Normalize deadline: empty string can't be stored in a Date field.
-    if (updates.expiryDate === "" || updates.expiryDate === null) delete updates.expiryDate;
-    if (
+    if (updates.expiryDate === "" || updates.expiryDate === null || updates.expiryDate === "null") {
+      updates.expiryDate = null;
+    } else if (
       updates.expiryDate !== undefined &&
       Number.isNaN(new Date(updates.expiryDate).getTime())
     ) {
       return res.status(400).json({ success: false, message: "The deadline/end date must be a valid date." });
+    } else if (updates.expiryDate) {
+      updates.expiryDate = new Date(updates.expiryDate);
     }
+
+    if (updates.publishDate && !Number.isNaN(new Date(updates.publishDate).getTime())) {
+      updates.publishDate = new Date(updates.publishDate);
+    }
+
+    // Process departments if provided
+    if (updates.departments !== undefined || updates.department !== undefined) {
+      let depts = [];
+      if (Array.isArray(updates.departments)) {
+        depts = updates.departments;
+      } else if (typeof updates.departments === "string" && updates.departments.trim()) {
+        try {
+          const parsed = JSON.parse(updates.departments);
+          depts = Array.isArray(parsed) ? parsed : [updates.departments];
+        } catch {
+          depts = updates.departments.split(",").map((s) => s.trim());
+        }
+      } else if (updates.department) {
+        depts = updates.department.split(",").map((s) => s.trim());
+      }
+      depts = depts.filter(Boolean);
+      if (!depts.length) depts = ["All"];
+      updates.departments = depts;
+      updates.department = depts.includes("All") ? "All" : depts.join(", ");
+    }
+
+    if (updates.departmentId !== undefined) {
+      if (!updates.departmentId || updates.departmentId === "All" || !mongoose.Types.ObjectId.isValid(updates.departmentId)) {
+        updates.departmentId = null;
+      }
+    }
+    if (updates.isPinned !== undefined) {
+      updates.isPinned = updates.isPinned === "true" || updates.isPinned === true;
+    }
+    if (updates.priority) {
+      updates.priority = updates.priority.toLowerCase();
+    }
+
     // Issuer identity always comes from the authenticated session — never trust the client.
     delete updates.createdBy;
     delete updates.authorName;
@@ -222,6 +306,9 @@ export async function updateAnnouncement(req, res, next) {
 
     // Handle new uploaded image if provided
     if (req.file) {
+      if (announcement.image || announcement.imageUrl) {
+        deleteUploadedFile(announcement.imageUrl || announcement.image, "announcements");
+      }
       updates.image = req.file.filename;
       updates.imageUrl = `/uploads/announcements/${req.file.filename}`;
     }
@@ -252,7 +339,7 @@ export async function updateAnnouncement(req, res, next) {
 
 /**
  * @route   DELETE /api/announcements/:id
- * @desc    Soft delete announcement
+ * @desc    Delete announcement permanently
  * @access  Protected (Teacher / Admin)
  */
 export async function deleteAnnouncement(req, res, next) {
@@ -273,8 +360,12 @@ export async function deleteAnnouncement(req, res, next) {
       }
     }
 
-    announcement.isActive = false;
-    await announcement.save();
+    // Permanently remove image file from filesystem if one exists
+    if (announcement.image || announcement.imageUrl) {
+      deleteUploadedFile(announcement.imageUrl || announcement.image, "announcements");
+    }
+
+    await Announcement.findByIdAndDelete(req.params.id);
 
     await logAuditEvent({
       userId: req.user._id,
@@ -283,13 +374,13 @@ export async function deleteAnnouncement(req, res, next) {
       role: req.user.role,
       action: "DELETE",
       resourceType: "Announcement",
-      resourceId: announcement._id.toString(),
-      details: `Removed announcement '${announcement.title}'`,
+      resourceId: req.params.id,
+      details: `Permanently removed announcement '${announcement.title}'`,
     });
 
     res.json({
       success: true,
-      message: "Announcement removed.",
+      message: "Announcement permanently removed.",
     });
   } catch (error) {
     next(error);

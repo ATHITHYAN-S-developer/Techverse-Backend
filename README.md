@@ -37,7 +37,7 @@ TechVerse Backend is a high-performance RESTful API built with **Node.js**, **Ex
                                 │
                     ┌───────────▼────────────┐
                     │    Services Layer      │
-                    │ Points, Streaks, Certs │
+                    │ Streaks & Certificates │
                     └───────────┬────────────┘
                                 │
                     ┌───────────▼────────────┐
@@ -60,9 +60,9 @@ TechVerse Backend is a high-performance RESTful API built with **Node.js**, **Ex
    - **Password Security Directive**: Passwords stored directly as plain text (`password: String`) and validated via `enteredPassword === user.password`.
 2. **Teacher Department Isolation**:
    - `departmentMiddleware` automatically checks that teachers can only create, edit, and delete academic resources/announcements for their assigned `departmentId`.
-3. **Anti-Cheat Test Delivery**:
-   - `GET /api/tests/today` and `GET /api/tests/:id` dynamically strip `correctAnswer` and `explanation` from responses sent to students.
-   - Scoring, grading, points awarding (+10 points, +50 streak bonuses), and streak updates are computed entirely on the server upon `POST /api/tests/:id/submit`.
+3. **Course-Final Assessments**:
+   - Authenticated students access assessments through `/api/course-assessments` after reaching a course's final assessment flow.
+   - Correct answers remain server-side; the API scores submissions and applies the course's module-completion gate.
 4. **Verifiable Certificates**:
    - Publicly verifiable through unique alphanumeric verification codes at `/api/certificates/verify/:code`.
 5. **Recharts-Compatible Analytics**:
@@ -137,7 +137,7 @@ CLIENT_URL=http://localhost:5173
 ```
 
 ### 4. Seed Default Database
-Run the automated seed script to populate sample departments (CSE, AI&DS, IT, ECE, EEE, MECH, CIVIL), subjects, courses, daily tests, and test accounts:
+Run the automated seed script to populate sample departments (CSE, AI&DS, IT, ECE, EEE, MECH, CIVIL), subjects, courses, course-final assessments, and test accounts:
 ```bash
 npm run seed
 ```
@@ -171,11 +171,10 @@ Health check endpoint: `http://localhost:5000/api/health`.
 | `PUT` | `/api/auth/profile` | Protected | Update user profile info (name, profileImage). |
 | `POST` | `/api/auth/change-password` | Protected | Update user password. |
 
-### 2. Users, Leaderboard & Gamification (`/api/users`)
+### 2. Users, Streaks & Leaderboard (`/api/users`)
 | Method | Endpoint | Access | Description |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/users/leaderboard` | Public | Paginated student ranking by total points or streak count. |
-| `GET` | `/api/users/points-history` | Protected (Student) | Paginated ledger of points earned by student. |
+| `GET` | `/api/users/leaderboard` | Public | Paginated student ranking by active streak. |
 | `GET` | `/api/users/streak` | Protected (Student) | Fetch current streak, longest streak, and freezes. |
 
 ### 3. Academic Structure (`/api/departments`, `/api/classes`, `/api/subjects`)
@@ -214,19 +213,18 @@ Health check endpoint: `http://localhost:5000/api/health`.
 | `GET` | `/api/courses` | Public | List published courses with user's active progress percentage. |
 | `GET` | `/api/courses/:slug` | Public | Course details with ordered module list. |
 | `POST` | `/api/courses/:id/enroll` | Student | Enroll in a course. |
-| `POST` | `/api/courses/:id/complete-module` | Student | Mark module complete, calculate progress, award points, trigger certificate if 100%. |
+| `POST` | `/api/courses/:id/complete-module` | Student | Mark module complete, calculate progress, and trigger certificate if 100%. |
 | `GET` | `/api/courses/my/enrollments` | Student | List all enrolled courses for authenticated student. |
 | `POST` | `/api/courses` | Teacher, Admin | Create new course. |
 | `POST` | `/api/modules` | Teacher, Admin | Add module to course. |
 
-### 7. Daily Practice Tests (`/api/tests`)
+### 7. Course-Final Assessments (`/api/course-assessments`)
 | Method | Endpoint | Access | Description |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/tests/today` | Public | Today's test sanitized (**no correct answers sent**). |
-| `GET` | `/api/tests/:id` | Public | Test details sanitized for students. |
-| `POST` | `/api/tests/:id/submit` | Student | **Submit test**: Backend grades answers, computes score %, updates streak, awards points, records attempt, returns score and answer review. |
-| `GET` | `/api/tests/my/attempts` | Student | History of test scores and attempts. |
-| `POST` | `/api/tests` | Teacher, Admin | Create test with questions, options, answers, and explanations. |
+| `GET` | `/api/course-assessments/course/:courseSlug` | Student | Find the published final assessment for a course. |
+| `GET` | `/api/course-assessments/:courseSlug/:assessmentId` | Student | Get a sanitized course assessment and module-completion lock status. |
+| `POST` | `/api/course-assessments/:courseSlug/:assessmentId/submit` | Student | Submit answers for server-side grading, streak, and attempt recording. |
+| `POST` | `/api/course-assessments/:courseSlug/:assessmentId/violation` | Student | Record a proctoring violation for the course-final assessment. |
 
 ### 8. Verifiable Certificates (`/api/certificates`)
 | Method | Endpoint | Access | Description |

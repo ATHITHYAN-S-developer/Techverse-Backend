@@ -68,10 +68,6 @@ const problemSchema = new mongoose.Schema(
     publicTestCases: [testCaseSchema],
     // Hidden test cases are kept strictly on the server to prevent cheating
     hiddenTestCases: [testCaseSchema],
-    points: {
-      type: Number,
-      default: 20,
-    },
   },
   { _id: true }
 );
@@ -122,14 +118,6 @@ const codingTestSchema = new mongoose.Schema(
       antiPaste: { type: Boolean, default: true },
       maxViolations: { type: Number, default: 3 },
       autoSubmitOnViolation: { type: Boolean, default: true },
-    },
-    pointsReward: {
-      type: Number,
-      default: 50,
-    },
-    bonusPoints: {
-      type: Number,
-      default: 25,
     },
     isPublished: {
       type: Boolean,

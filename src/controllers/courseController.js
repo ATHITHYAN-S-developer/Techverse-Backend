@@ -5,7 +5,6 @@ import { Enrollment } from "../models/Enrollment.js";
 import { ModuleProgress } from "../models/ModuleProgress.js";
 import { Certificate } from "../models/Certificate.js";
 import { User } from "../models/User.js";
-import { awardPoints } from "../services/pointsService.js";
 import { updateStreakOnActivity } from "../services/streakService.js";
 import { issueCertificate } from "../services/certificateService.js";
 import { logAuditEvent } from "../services/auditService.js";
@@ -111,10 +110,31 @@ export async function getCourses(req, res, next) {
 export async function getMyCourses(req, res, next) {
   try {
     const { category, search } = req.query;
-    const query = {
-      isPublished: true,
-      $or: [{ assignedFacultyId: req.user._id }, { createdBy: req.user._id }],
-    };
+    const query = { isPublished: true };
+
+    if (req.user.role === "admin") {
+      // Admin can see all courses
+    } else if (req.user.role === "hod") {
+      // HOD sees all courses created by them, in their department, or assigned
+      if (req.user.departmentId) {
+        query.$or = [
+          { departmentId: req.user.departmentId },
+          { createdBy: req.user._id },
+          { assignedFacultyId: req.user._id },
+        ];
+      } else {
+        query.$or = [
+          { createdBy: req.user._id },
+          { assignedFacultyId: req.user._id },
+        ];
+      }
+    } else {
+      // Regular Faculty: only sees courses assigned to them by HOD
+      query.$or = [
+        { assignedFacultyId: req.user._id },
+        { createdBy: req.user._id },
+      ];
+    }
 
     if (category && category !== "All") {
       query.category = category;
@@ -224,8 +244,9 @@ export async function getCourseBySlug(req, res, next) {
       obj.isUnlocked = isUnlocked;
       obj.watchPercentage = p?.watchPercentage || (isCourseCompleted ? 100 : 0);
       obj.uniqueWatchedSeconds = p?.uniqueWatchedSeconds || 0;
-      obj.videoRequirementMet = isCourseCompleted || Boolean(p?.videoRequirementMet);
-      obj.testUnlocked = isCourseCompleted || isPrivileged || (isUnlocked && Boolean(p?.testUnlocked && p?.videoRequirementMet));
+      const isVideoMandatory = Boolean(m.hasVideo && m.isVideoMandatory);
+      obj.videoRequirementMet = isCourseCompleted || !isVideoMandatory || Boolean(p?.videoRequirementMet);
+      obj.testUnlocked = isCourseCompleted || isPrivileged || (isUnlocked && (!isVideoMandatory || Boolean(p?.testUnlocked && p?.videoRequirementMet)));
       obj.testScore = p?.testScore ?? null;
       obj.testPassed = isPassed;
       obj.status = p?.status || (isPassed ? "module_completed" : isUnlocked ? "video_in_progress" : "video_locked");
@@ -294,39 +315,45 @@ export async function createCourse(req, res, next) {
       return res.status(400).json({ success: false, message: "Title and description are required." });
     }
 
+    if (req.user.role !== "hod" && req.user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Forbidden: Courses can only be created by an HOD or Administrator.",
+        code: "HOD_ADMIN_ONLY",
+      });
+    }
+
     let assignedFacultyId;
     let assignedFacultyName = "";
 
-    if (req.user.role === "teacher") {
-      assignedFacultyId = req.user._id;
-      assignedFacultyName = req.user.name;
-    } else {
-      const candidateFacultyId = req.body.assignedFacultyId;
-      if (!candidateFacultyId) {
-        return res.status(400).json({
-          success: false,
-          message: "Faculty assignment is compulsory. Please select a faculty member.",
-        });
-      }
-
-      if (!mongoose.Types.ObjectId.isValid(candidateFacultyId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid faculty ID format.",
-        });
-      }
-
-      const facultyUser = await User.findOne({ _id: candidateFacultyId, role: "teacher" });
-      if (!facultyUser) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid faculty member assigned. Faculty must be a registered teacher.",
-        });
-      }
-
-      assignedFacultyId = facultyUser._id;
-      assignedFacultyName = facultyUser.name;
+    const candidateFacultyId = req.body.assignedFacultyId;
+    if (!candidateFacultyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Faculty assignment is compulsory. The HOD must select the faculty member who will manage this course's modules.",
+      });
     }
+
+    if (!mongoose.Types.ObjectId.isValid(candidateFacultyId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid faculty ID format.",
+      });
+    }
+
+    const facultyUser = await User.findOne({
+      _id: candidateFacultyId,
+      role: { $in: ["faculty", "teacher", "hod"] },
+    });
+    if (!facultyUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid faculty member assigned. Faculty must be a registered faculty member.",
+      });
+    }
+
+    assignedFacultyId = facultyUser._id;
+    assignedFacultyName = facultyUser.name;
 
     const baseSlug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     let slug = baseSlug;
@@ -415,10 +442,7 @@ export async function updateCourse(req, res, next) {
     delete updates.slug;
     delete updates.assignedFacultyName;
 
-    if (req.user.role === "teacher") {
-      // Teachers cannot reassign faculty
-      delete updates.assignedFacultyId;
-    } else if (req.user.role === "admin" && updates.assignedFacultyId) {
+    if ((req.user.role === "admin" || req.user.role === "hod") && updates.assignedFacultyId) {
       if (!mongoose.Types.ObjectId.isValid(updates.assignedFacultyId)) {
         return res.status(400).json({
           success: false,
@@ -426,11 +450,14 @@ export async function updateCourse(req, res, next) {
         });
       }
 
-      const facultyUser = await User.findOne({ _id: updates.assignedFacultyId, role: "teacher" });
+      const facultyUser = await User.findOne({
+        _id: updates.assignedFacultyId,
+        role: { $in: ["faculty", "teacher", "hod"] },
+      });
       if (!facultyUser) {
         return res.status(400).json({
           success: false,
-          message: "Invalid faculty member assigned. Faculty must be a registered teacher.",
+          message: "Invalid faculty member assigned. Faculty must be a registered faculty member.",
         });
       }
 
@@ -593,8 +620,6 @@ export async function completeModule(req, res, next) {
     const progress = totalModules > 0 ? Math.round((enrollment.completedModules.length / totalModules) * 100) : 100;
     enrollment.progressPercentage = Math.min(progress, 100);
 
-    // Award module points (+25)
-    await awardPoints(studentId, 25, "module_completion", `Completed module for course`);
     await updateStreakOnActivity(studentId);
 
     // If 100% complete, issue course completion points and certificate
@@ -602,8 +627,6 @@ export async function completeModule(req, res, next) {
     if (enrollment.progressPercentage >= 100 && enrollment.status !== "completed") {
       enrollment.status = "completed";
       enrollment.completedAt = new Date();
-      await awardPoints(studentId, 500, "course_completion", `Completed course milestone`);
-
       try {
         certificateIssued = await issueCertificate({
           studentId,
@@ -713,7 +736,8 @@ export async function getModuleProgressionHandler(req, res, next) {
     const { progress, moduleDoc, isUnlocked, isCourseDone } = await getOrCreateModuleProgress(studentId, course._id, moduleId);
     const cert = await Certificate.findOne({ studentId, courseId: course._id, moduleId: moduleDoc._id });
     const isPrivileged = req.user.role === "admin" || req.user.role === "teacher";
-    const testUnlocked = isCourseDone || isPrivileged || (isUnlocked && Boolean(progress.testUnlocked && progress.videoRequirementMet));
+    const isVideoMandatory = Boolean(moduleDoc.hasVideo && moduleDoc.isVideoMandatory);
+    const testUnlocked = isCourseDone || isPrivileged || (isUnlocked && (!isVideoMandatory || Boolean(progress.testUnlocked && progress.videoRequirementMet)));
 
     res.json({
       success: true,

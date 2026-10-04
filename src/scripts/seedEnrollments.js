@@ -12,7 +12,7 @@
  * student, so the dashboard rendered as one long empty state.
  *
  * Design notes:
- *  - Deterministic. Progress, streak and points are derived from a hash of the
+ *  - Deterministic. Progress and streak are derived from a hash of the
  *    student's _id, so a second run produces byte-identical results and nothing
  *    shifts under a user who already has real activity.
  *  - Idempotent. Enrollments upsert on the (studentId, courseId) unique index and
@@ -188,7 +188,6 @@ async function main() {
     const rng = makeRng(hash32(student._id.toString()));
     const plan = planFor(student.courseCode);
     let branchEnrollments = 0;
-    let branchPoints = 0;
 
     for (const key of plan) {
       const course = courseByKey.get(key);
@@ -218,9 +217,6 @@ async function main() {
       // same rng draw and reuse it across the student's courses.
       const currentStreak = rng() < 0.45 ? 0 : pick(rng, 1, 42);
       const longestStreak = Math.max(currentStreak, pick(rng, 1, 96));
-      const earned = done.length * pick(rng, 90, 180) + pick(rng, 0, 260);
-      branchPoints += earned;
-
       const lastActiveAt = new Date(Date.now() - pick(rng, 0, 6) * 86400000);
 
       enrollmentOps.push({
@@ -234,7 +230,6 @@ async function main() {
               status,
               currentStreak,
               longestStreak,
-              totalPointsEarned: earned,
               lastActiveDate: currentStreak > 0 ? dayOffset(0) : dayOffset(-pick(rng, 1, 12)),
               lastActivityAt: lastActiveAt,
               startedAt: new Date(lastActiveAt.getTime() - pick(rng, 5, 120) * 86400000),
@@ -298,11 +293,8 @@ async function main() {
     userOps.push({
       updateOne: {
         filter: { _id: student._id },
-        // $max so a real score the student earned on their own is never lowered.
         update: {
           $max: {
-            "points.totalPoints": branchPoints,
-            "points.level": Math.floor(branchPoints / 500) + 1,
             "streak.longestStreak": Math.max(activeStreak, pick(rng, 1, 96)),
           },
           $set: {

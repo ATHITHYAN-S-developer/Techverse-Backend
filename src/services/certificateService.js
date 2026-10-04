@@ -3,7 +3,6 @@ import { Course } from "../models/Course.js";
 import { Enrollment } from "../models/Enrollment.js";
 import { User } from "../models/User.js";
 import { generateCertificateNumber, generateVerificationCode } from "../utils/generateId.js";
-import { awardPoints } from "./pointsService.js";
 import { logAuditEvent } from "./auditService.js";
 
 export async function generateCourseCertificate(studentIdOrParams, courseIdParam, scoreParam) {
@@ -87,16 +86,6 @@ export async function generateCourseCertificate(studentIdOrParams, courseIdParam
     verificationCode: verCode,
     status: "valid",
     issuedAt: new Date(),
-  });
-
-  // Award course completion points (+500)
-  await awardPoints({
-    studentId,
-    courseId,
-    type: "course_completion",
-    points: 500,
-    description: `Completed Course: ${course.title}`,
-    referenceId: certNumber,
   });
 
   await logAuditEvent({

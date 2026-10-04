@@ -18,9 +18,10 @@ import { authorize } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
+router.get("/users", authenticate, authorize("admin", "hod"), getUsers);
+
 router.use(authenticate, authorize("admin"));
 
-router.get("/users", getUsers);
 router.post("/users", createUser);
 router.put("/users/:id", updateUser);
 router.put("/users/:id/status", toggleUserStatus);

@@ -1,11 +1,4 @@
 import { User } from "../models/User.js";
-import { awardPoints } from "./pointsService.js";
-
-const STREAK_BONUSES = {
-  7: { points: 50, type: "streak_7", description: "7-Day Consistent Streak Bonus!" },
-  14: { points: 100, type: "streak_14", description: "14-Day Consistency Streak Bonus!" },
-  30: { points: 200, type: "streak_30", description: "30-Day Legend Streak Bonus!" },
-};
 
 /**
  * Local calendar day as YYYY-MM-DD. Uses the server's local timezone rather
@@ -37,10 +30,10 @@ export async function updateStreakOnActivity(studentId) {
   try {
     const user = await User.findById(studentId);
     if (!user) {
-      return { ok: false, currentStreak: 0, longestStreak: 0, bonusAwarded: 0, error: "USER_NOT_FOUND" };
+      return { ok: false, currentStreak: 0, longestStreak: 0, error: "USER_NOT_FOUND" };
     }
     if (user.role !== "student") {
-      return { ok: false, currentStreak: 0, longestStreak: 0, bonusAwarded: 0, error: "NOT_A_STUDENT" };
+      return { ok: false, currentStreak: 0, longestStreak: 0, error: "NOT_A_STUDENT" };
     }
 
     const lastDate = user.streak?.lastActiveDate || null;
@@ -51,7 +44,6 @@ export async function updateStreakOnActivity(studentId) {
         advanced: false,
         currentStreak: user.streak?.currentStreak || 0,
         longestStreak: user.streak?.longestStreak || 0,
-        bonusAwarded: 0,
       };
     }
 
@@ -79,13 +71,6 @@ export async function updateStreakOnActivity(studentId) {
     user.streak.lastActiveDate = today;
     if (user.streak.freezeCount === undefined) user.streak.freezeCount = 0;
 
-    let bonus = 0;
-    const bonusRule = STREAK_BONUSES[newStreak];
-    if (bonusRule) {
-      bonus = bonusRule.points;
-      await awardPoints(studentId, bonusRule.points, bonusRule.type, bonusRule.description);
-    }
-
     await user.save();
 
     return {
@@ -94,7 +79,6 @@ export async function updateStreakOnActivity(studentId) {
       currentStreak: newStreak,
       longestStreak,
       freezeUsed: preserved,
-      bonusAwarded: bonus,
     };
   } catch (error) {
     console.error("[Streak Service Error]:", error);
@@ -102,7 +86,6 @@ export async function updateStreakOnActivity(studentId) {
       ok: false,
       currentStreak: 0,
       longestStreak: 0,
-      bonusAwarded: 0,
       error: error?.message || "STREAK_UPDATE_FAILED",
     };
   }

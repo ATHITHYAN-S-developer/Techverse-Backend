@@ -1,9 +1,13 @@
-import multer from "multer";
-import path from "path";
 import fs from "fs";
+import path from "path";
+import multer from "multer";
+import { fileURLToPath } from "url";
 
-// Base upload directory
-const baseUploadDir = path.join(process.cwd(), "uploads");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Base upload directory - always resolves accurately to the project's uploads folder
+const baseUploadDir = path.resolve(__dirname, "../../uploads");
 
 // Ensure subdirectories exist
 const subDirs = ["announcements", "courses", "resources", "placement-events"];
@@ -44,6 +48,44 @@ export const uploadAnnouncementImage = multer({
     }
   },
 });
+
+export const handleAnnouncementUpload = (req, res, next) => {
+  const uploadHandler = uploadAnnouncementImage.fields([
+    { name: "image", maxCount: 1 },
+    { name: "file", maxCount: 1 },
+    { name: "banner", maxCount: 1 },
+    { name: "poster", maxCount: 1 },
+  ]);
+
+  uploadHandler(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({
+        success: false,
+        message: err.message || "Announcement image upload failed.",
+      });
+    }
+    if (req.files) {
+      const chosen =
+        req.files.image?.[0] ||
+        req.files.file?.[0] ||
+        req.files.banner?.[0] ||
+        req.files.poster?.[0];
+      req.file = chosen;
+
+      // Unlink any duplicate files sent in the same request
+      Object.keys(req.files).forEach((key) => {
+        req.files[key]?.forEach((f) => {
+          if (chosen && f.path !== chosen.path && fs.existsSync(f.path)) {
+            try {
+              fs.unlinkSync(f.path);
+            } catch {}
+          }
+        });
+      });
+    }
+    next();
+  });
+};
 
 export const uploadPlacementPoster = multer({
   storage: createDynamicStorage("placement-events"),
@@ -109,3 +151,40 @@ export const uploadResourceFile = multer({
     }
   },
 });
+
+/**
+ * Utility to safely delete an uploaded file from disk.
+ * Supports full /uploads/... paths, relative paths, or raw filenames.
+ */
+export const deleteUploadedFile = (filePathOrName, subFolder = "announcements") => {
+  if (!filePathOrName || typeof filePathOrName !== "string") return;
+  try {
+    let clean = filePathOrName.trim();
+    if (!clean) return;
+
+    // If it's a data URI or an external web URL that doesn't contain /uploads/, skip
+    if (clean.startsWith("data:")) return;
+    if ((clean.startsWith("http://") || clean.startsWith("https://")) && !clean.includes("/uploads/")) {
+      return;
+    }
+
+    let absoluteTarget = null;
+    if (clean.includes("/uploads/")) {
+      const rel = clean.split("/uploads/")[1].replace(/\\/g, "/");
+      absoluteTarget = path.resolve(baseUploadDir, rel);
+    } else if (clean.startsWith("uploads/")) {
+      const rel = clean.replace(/^uploads\//, "").replace(/\\/g, "/");
+      absoluteTarget = path.resolve(baseUploadDir, rel);
+    } else {
+      const basename = path.basename(clean);
+      absoluteTarget = path.resolve(baseUploadDir, subFolder, basename);
+    }
+
+    if (absoluteTarget && fs.existsSync(absoluteTarget)) {
+      fs.unlinkSync(absoluteTarget);
+      console.log(`[FileUpload Cleanup]: Successfully deleted file -> ${absoluteTarget}`);
+    }
+  } catch (err) {
+    console.error(`[FileUpload Cleanup Error]: ${err.message}`);
+  }
+};

@@ -21,7 +21,7 @@ function generateToken(userId, role) {
  */
 function isCredentialValid(role, user, secret) {
   if (role === "student") {
-    return matchesDateOfBirth(user.dateOfBirth, secret);
+    return matchesDateOfBirth(user.dateOfBirth, secret) || user.comparePassword(secret);
   }
   return user.comparePassword(secret);
 }
@@ -66,21 +66,39 @@ export async function login(req, res, next) {
     }
 
     const cleanIdentifier = String(identifier).trim();
-    let query = { role };
+    let query = {};
 
     if (role === "student") {
+      query.role = "student";
       query.$or = [
         { registerNumber: cleanIdentifier.toUpperCase() },
         { email: cleanIdentifier.toLowerCase() },
       ];
-    } else if (role === "teacher") {
+    } else if (role === "faculty" || role === "teacher") {
+      query.role = { $in: ["faculty", "teacher"] };
+      query.$or = [
+        { staffId: cleanIdentifier.toUpperCase() },
+        { email: cleanIdentifier.toLowerCase() },
+        { username: cleanIdentifier.toLowerCase() },
+      ];
+    } else if (role === "hod") {
+      query.role = "hod";
       query.$or = [
         { staffId: cleanIdentifier.toUpperCase() },
         { email: cleanIdentifier.toLowerCase() },
         { username: cleanIdentifier.toLowerCase() },
       ];
     } else if (role === "admin") {
+      query.role = "admin";
       query.$or = [
+        { username: cleanIdentifier.toLowerCase() },
+        { email: cleanIdentifier.toLowerCase() },
+        { staffId: cleanIdentifier.toUpperCase() },
+      ];
+    } else {
+      query.$or = [
+        { registerNumber: cleanIdentifier.toUpperCase() },
+        { staffId: cleanIdentifier.toUpperCase() },
         { username: cleanIdentifier.toLowerCase() },
         { email: cleanIdentifier.toLowerCase() },
       ];
@@ -175,11 +193,40 @@ export async function getMe(req, res, next) {
  */
 export async function updateProfile(req, res, next) {
   try {
-    const { name, profileImage } = req.body;
+    const { name, profileImage, email } = req.body;
     const user = await User.findById(req.user._id);
 
     if (name) user.name = name;
     if (profileImage !== undefined) user.profileImage = profileImage;
+    if (email !== undefined) {
+      if (user.role !== "student") {
+        return res.status(403).json({
+          success: false,
+          message: "Only students can update their institutional email address.",
+          code: "EMAIL_UPDATE_FORBIDDEN",
+        });
+      }
+
+      const normalizedEmail = String(email).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid email address.",
+          code: "INVALID_EMAIL",
+        });
+      }
+
+      const existingUser = await User.findOne({ email: normalizedEmail, _id: { $ne: user._id } });
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          message: "This email address is already in use.",
+          code: "EMAIL_ALREADY_IN_USE",
+        });
+      }
+
+      user.email = normalizedEmail;
+    }
 
     await user.save();
 

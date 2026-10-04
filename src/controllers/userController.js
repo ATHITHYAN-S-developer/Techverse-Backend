@@ -1,5 +1,4 @@
 import { User } from "../models/User.js";
-import { Point } from "../models/Point.js";
 import { Certificate } from "../models/Certificate.js";
 import { getPagination } from "../utils/pagination.js";
 
@@ -30,7 +29,7 @@ export async function getUsers(req, res, next) {
       User.find(query)
         .populate("departmentId", "code name")
         .populate("classId", "className year semester section")
-        .sort({ "points.totalPoints": -1, createdAt: -1 })
+        .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
       User.countDocuments(query),
@@ -40,7 +39,6 @@ export async function getUsers(req, res, next) {
       success: true,
       users: users.map((u) => ({
         ...u.toSafeObject(),
-        points: u.points?.totalPoints || 0,
         streak: u.streak?.currentStreak || 0,
         department: u.departmentId?.code || u.departmentId?.name || "CSE",
         className: u.classId?.className || "",
@@ -66,7 +64,7 @@ export async function getUsers(req, res, next) {
  */
 export async function getLeaderboard(req, res, next) {
   try {
-    const { departmentId, type = "points" } = req.query;
+    const { departmentId } = req.query;
     const { page, limit, skip } = getPagination(req.query, 20);
 
     const query = { role: "student", isActive: true };
@@ -74,11 +72,11 @@ export async function getLeaderboard(req, res, next) {
       query.departmentId = departmentId;
     }
 
-    const sortField = type === "streak" ? { "streak.currentStreak": -1, "points.totalPoints": -1 } : { "points.totalPoints": -1, "streak.currentStreak": -1 };
+    const sortField = { "streak.currentStreak": -1, "streak.longestStreak": -1, createdAt: 1 };
 
     const [users, total] = await Promise.all([
       User.find(query)
-        .select("name registerNumber departmentId classId points streak profileImage")
+        .select("name registerNumber departmentId classId streak profileImage")
         .populate("departmentId", "code name")
         .sort(sortField)
         .skip(skip)
@@ -100,8 +98,6 @@ export async function getLeaderboard(req, res, next) {
       name: u.name,
       registerNumber: u.registerNumber,
       department: u.departmentId?.code || u.departmentId?.name || "VCET",
-      points: u.points?.totalPoints || 0,
-      level: u.points?.level || 1,
       streak: u.streak?.currentStreak || 0,
       longestStreak: u.streak?.longestStreak || 0,
       certificatesEarned: certCountBy.get(String(u._id)) || 0,
@@ -124,46 +120,13 @@ export async function getLeaderboard(req, res, next) {
 }
 
 /**
- * @route   GET /api/users/points-history
- * @desc    Get authenticated student's points log
- * @access  Protected (Student)
- */
-export async function getPointsHistory(req, res, next) {
-  try {
-    const { page, limit, skip } = getPagination(req.query, 20);
-    const userId = req.user._id;
-
-    const [history, total] = await Promise.all([
-      Point.find({ studentId: userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Point.countDocuments({ userId }),
-    ]);
-
-    res.json({
-      success: true,
-      history,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-
-/**
  * @route   GET /api/users/streak
  * @desc    Get authenticated student's streak details
  * @access  Protected (Student)
  */
 export async function getStreakInfo(req, res, next) {
   try {
-    const user = await User.findById(req.user._id).select("streak points");
+    const user = await User.findById(req.user._id).select("streak");
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found." });
     }
@@ -171,7 +134,6 @@ export async function getStreakInfo(req, res, next) {
     res.json({
       success: true,
       streak: user.streak || { currentStreak: 0, longestStreak: 0, freezeCount: 0 },
-      points: user.points || { totalPoints: 0, level: 1 },
     });
   } catch (error) {
     next(error);

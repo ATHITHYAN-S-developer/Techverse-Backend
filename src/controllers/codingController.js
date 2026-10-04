@@ -5,7 +5,6 @@ import { TestViolation } from "../models/TestViolation.js";
 import { User } from "../models/User.js";
 import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
 import { ArenaBusyError } from "../services/semaphore.js";
-import { awardPoints } from "../services/pointsService.js";
 import { updateStreak } from "../services/streakService.js";
 import { logAuditEvent } from "../services/auditService.js";
 
@@ -261,13 +260,7 @@ export async function submitCode(req, res, next) {
     const scorePercentage = totalCases > 0 ? Math.round((passedCases / totalCases) * 100) : 0;
     const isAccepted = result.status === "Accepted";
 
-    let pointsAwarded = 0;
     if (isAccepted) {
-      pointsAwarded = test.pointsReward || 30;
-      if (violations.length === 0) {
-        pointsAwarded += test.bonusPoints || 10; // Bonus for clean zero-violation run
-      }
-      await awardPoints(studentId, pointsAwarded, "coding_challenge", `Solved Coding Problem: ${problem.title}`);
       await updateStreak(studentId);
     }
 
@@ -338,7 +331,6 @@ export async function submitCode(req, res, next) {
       passedCases,
       totalCases,
       score: scorePercentage,
-      pointsAwarded,
       isAccepted,
       executionTime: result.executionTime,
       memory: result.memory,
@@ -429,8 +421,6 @@ export async function createCodingTest(req, res, next) {
       languages = ["python", "javascript", "cpp", "java", "c"],
       problems = [],
       settings = {},
-      pointsReward = 50,
-      bonusPoints = 25,
       isPublished = true,
     } = req.body;
 
@@ -460,8 +450,6 @@ export async function createCodingTest(req, res, next) {
         maxViolations: settings.maxViolations || 3,
         autoSubmitOnViolation: settings.autoSubmitOnViolation !== false,
       },
-      pointsReward,
-      bonusPoints,
       isPublished,
       createdBy: req.user?._id,
     });

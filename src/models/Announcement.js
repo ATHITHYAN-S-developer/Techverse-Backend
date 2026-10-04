@@ -22,7 +22,6 @@ const announcementSchema = new mongoose.Schema(
     },
     priority: {
       type: String,
-      enum: ["low", "normal", "high", "urgent", "Normal", "Important", "Urgent"],
       default: "normal",
       index: true,
     },
@@ -36,13 +35,22 @@ const announcementSchema = new mongoose.Schema(
     },
     targetAudience: {
       type: String,
-      enum: ["all", "students", "teachers", "department"],
       default: "all",
       index: true,
     },
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Department",
+      index: true,
+    },
+    department: {
+      type: String,
+      default: "All",
+      index: true,
+    },
+    departments: {
+      type: [String],
+      default: ["All"],
       index: true,
     },
     isPinned: {

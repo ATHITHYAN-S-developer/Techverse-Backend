@@ -19,7 +19,7 @@ import announcementRoutes from "./routes/announcementRoutes.js";
 import placementEventRoutes from "./routes/placementEventRoutes.js";
 import courseRoutes from "./routes/courseRoutes.js";
 import moduleRoutes from "./routes/moduleRoutes.js";
-import testRoutes from "./routes/testRoutes.js";
+import courseAssessmentRoutes from "./routes/courseAssessmentRoutes.js";
 import codingRoutes from "./routes/codingRoutes.js";
 import certificateRoutes from "./routes/certificateRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
@@ -47,12 +47,15 @@ app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
 // HTTP Request Logger Middleware
+const logFilePath = path.join(process.cwd(), "app.log");
+
 app.use((req, res, next) => {
   const start = Date.now();
   const { method, originalUrl } = req;
   res.on("finish", () => {
     const duration = Date.now() - start;
     const status = res.statusCode;
+    const timestamp = new Date().toISOString();
     const color =
       status >= 500
         ? "\x1b[31m"
@@ -64,6 +67,14 @@ app.use((req, res, next) => {
     console.log(
       `[${new Date().toLocaleTimeString()}] ${color}${method}\x1b[0m ${originalUrl} -> ${color}${status}\x1b[0m (${duration}ms)`
     );
+
+    // Append to app.log
+    const logLine = `[${timestamp}] ${method} ${originalUrl} -> ${status} (${duration}ms)\n`;
+    fs.appendFile(logFilePath, logLine, (err) => {
+      if (err) {
+        // Silently ignore or fallback
+      }
+    });
   });
   next();
 });
@@ -94,7 +105,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/placement-events", placementEventRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/modules", moduleRoutes);
-app.use("/api/tests", testRoutes);
+app.use("/api/course-assessments", courseAssessmentRoutes);
 app.use("/api/coding", codingRoutes);
 app.use("/api/certificates", certificateRoutes);
 app.use("/api/analytics", analyticsRoutes);

@@ -15,6 +15,7 @@
     "seed:enrollments": "node src/scripts/seedEnrollments.js",
     "backfill": "node src/scripts/backfillGamification.js",
     "backfill:certificates": "node src/scripts/backfillCourseCertificates.js",
+    "streak:reset": "node scripts/resetStreaks.js",
     "requirements": "node scripts/check-requirements.js"
   },
   "dependencies": {

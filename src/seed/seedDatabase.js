@@ -8,7 +8,7 @@ import { Resource } from "../models/Resource.js";
 import { Announcement } from "../models/Announcement.js";
 import { Course } from "../models/Course.js";
 import { CourseModule } from "../models/CourseModule.js";
-import { DailyTest } from "../models/DailyTest.js";
+import { CourseAssessment } from "../models/CourseAssessment.js";
 import { CodingTest } from "../models/CodingTest.js";
 import { CodingSubmission } from "../models/CodingSubmission.js";
 import { TestViolation } from "../models/TestViolation.js";
@@ -33,7 +33,7 @@ async function seedDatabase() {
       Announcement.deleteMany({}),
       Course.deleteMany({}),
       CourseModule.deleteMany({}),
-      DailyTest.deleteMany({}),
+      CourseAssessment.deleteMany({}),
       CodingTest.deleteMany({}),
       CodingSubmission.deleteMany({}),
       TestViolation.deleteMany({}),
@@ -164,9 +164,9 @@ async function seedDatabase() {
         email: "admin@vcet.ac.in",
         isActive: true,
       },
-      // Teacher Account (CSE Department)
+      // HOD Account (CSE Department)
       {
-        role: "teacher",
+        role: "hod",
         staffId: "VCET-FAC-CSE-104",
         password: "faculty123", // Plain-text
         name: "Dr. K. S. Sendhilkumar",
@@ -175,9 +175,9 @@ async function seedDatabase() {
         designation: "Associate Professor & HOD i/c",
         isActive: true,
       },
-      // Teacher Account (AI&DS Department)
+      // Faculty Account (AI&DS Department)
       {
-        role: "teacher",
+        role: "faculty",
         staffId: "VCET-FAC-AIDS-201",
         password: "faculty123", // Plain-text
         name: "Dr. M. Sangeetha",
@@ -186,19 +186,19 @@ async function seedDatabase() {
         designation: "Assistant Professor (Sr. Gr)",
         isActive: true,
       },
-      // Student Account (Athithya R)
+      // Student Account (Athithyan S)
       {
         role: "student",
-        registerNumber: "732924CSE001",
+        registerNumber: "732924CSR014",
         password: "student123", // Plain-text
         // Students log in with register number + date of birth (UTC midnight).
-        name: "Athithya R",
-        email: "732924cse001@vcet.ac.in",
-        dateOfBirth: new Date(Date.UTC(2007, 8, 20)),
+        name: "Athithyan S",
+        email: "732924csr014@vcet.ac.in",
+        dateOfBirth: new Date(Date.UTC(2006, 6, 20)), // 20/07/2006
         departmentId: deptMap["CSE"],
         classId: classMap["cse_3a"],
-        points: { totalPoints: 1240, level: 4 },
-        streak: { currentStreak: 12, longestStreak: 15, lastActiveDate: new Date().toISOString().split("T")[0] },
+        points: { totalPoints: 0, level: 1 },
+        streak: { currentStreak: 0, longestStreak: 0, lastActiveDate: null, freezeCount: 0 },
         isActive: true,
       },
       // Leaderboard Student 2
@@ -211,8 +211,8 @@ async function seedDatabase() {
         dateOfBirth: new Date(Date.UTC(2007, 4, 11)),
         departmentId: deptMap["CSE"],
         classId: classMap["cse_3a"],
-        points: { totalPoints: 1080, level: 3 },
-        streak: { currentStreak: 9, longestStreak: 12, lastActiveDate: new Date().toISOString().split("T")[0] },
+        points: { totalPoints: 0, level: 1 },
+        streak: { currentStreak: 0, longestStreak: 0, lastActiveDate: null, freezeCount: 0 },
         isActive: true,
       },
     ]);
@@ -221,136 +221,8 @@ async function seedDatabase() {
     const teacherCse = users.find((u) => u.staffId === "VCET-FAC-CSE-104");
 
     console.log("📄 Seeding Department & Platform Resources...");
-    await Resource.insertMany([
-      {
-        title: "Unit 1: Finite Automata & Regular Expressions Lecture Handout",
-        description: "Comprehensive lecture notes on DFA, NFA, epsilon transitions, and minimization algorithms.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        classId: classMap["cse_3a"],
-        type: "notes",
-        fileUrl: "https://vcet.ac.in/academic/cse/cs3452_unit1_notes.pdf",
-        externalUrl: "https://vcet.ac.in/academic/cse/cs3452_unit1_notes.pdf",
-        fileSize: "3.2 MB",
-        fileType: "application/pdf",
-        unit: 1,
-        tags: ["TOC", "DFA", "Automata", "Unit 1"],
-        downloadCount: 142,
-        uploadedBy: teacherCse._id,
-        uploaderRole: "teacher",
-        isPublished: true,
-      },
-      {
-        title: "CS3591 Computer Networks Lab Manual & Socket Programming Code",
-        description: "Complete laboratory experiments manual covering Wireshark captures, TCP/UDP sockets in C/Python.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3591"],
-        classId: classMap["cse_3a"],
-        type: "lab_manual",
-        fileUrl: "https://vcet.ac.in/academic/cse/cs3591_lab_manual.pdf",
-        externalUrl: "https://vcet.ac.in/academic/cse/cs3591_lab_manual.pdf",
-        fileSize: "4.8 MB",
-        fileType: "application/pdf",
-        unit: 2,
-        tags: ["Networks", "Lab", "Socket Programming", "Wireshark"],
-        downloadCount: 215,
-        uploadedBy: teacherCse._id,
-        uploaderRole: "teacher",
-        isPublished: true,
-      },
-      // Aptitude resources
-      {
-        title: "IndiaBIX Quantitative Aptitude",
-        description: "Comprehensive aptitude practice covering quantitative aptitude, logical reasoning, verbal ability, and technical interview questions.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        type: "aptitude",
-        externalUrl: "https://www.indiabix.com",
-        uploadedBy: adminUser._id,
-        tags: ["Aptitude", "Quantitative", "Logical Reasoning", "Placements"],
-        isPublished: true,
-      },
-      {
-        title: "PrepInsta Placement Repository",
-        description: "Dedicated placement preparation repository tailored for top tech companies (TCS, Infosys, Wipro, Cognizant, Accenture).",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        type: "aptitude",
-        externalUrl: "https://prepinsta.com",
-        uploadedBy: adminUser._id,
-        tags: ["Placements", "Company Specific", "Aptitude", "Coding"],
-        isPublished: true,
-      },
-      // Tech Pulse Updates resources
-      {
-        title: "daily.dev",
-        description: "All-in-one developer homepage delivering tailored engineering articles, open-source trends, framework releases.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        type: "updates",
-        externalUrl: "https://daily.dev",
-        uploadedBy: adminUser._id,
-        tags: ["Developer News", "AI", "Open Source", "Coding"],
-        isPublished: true,
-      },
-      {
-        title: "TLDR Tech",
-        description: "Bite-sized, curated daily newsletter summarizing the most critical tech headlines, AI breakthroughs, and engineering stories.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        type: "updates",
-        externalUrl: "https://tldr.tech",
-        uploadedBy: adminUser._id,
-        tags: ["Curated", "AI", "Software", "Daily Brief"],
-        isPublished: true,
-      },
-      // Tech Explorer Technology resources
-      {
-        title: "Google AI Studio",
-        description: "Fastest way to prototype and build production applications with Google Gemini models. Experiment with multimodal prompts.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        type: "technology",
-        externalUrl: "https://aistudio.google.com",
-        uploadedBy: adminUser._id,
-        tags: ["AI", "Gemini", "Multimodal", "API", "Development"],
-        isPublished: true,
-      },
-      {
-        title: "TryHackMe Ethical Hacking",
-        description: "Hands-on browser-based cybersecurity and ethical hacking training platform designed with gamified virtual machines.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        type: "technology",
-        externalUrl: "https://tryhackme.com",
-        uploadedBy: adminUser._id,
-        tags: ["Cybersecurity", "Ethical Hacking", "Networking", "Hands-on Labs"],
-        isPublished: true,
-      },
-      // YouTube Channel resources
-      {
-        title: "Matt Wolfe — AI Roundups",
-        description: "Curated weekly AI breakdowns, tool roundups, generative art showcases, and approachable deep-dives into consumer technology.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        type: "youtube",
-        externalUrl: "https://www.youtube.com/@mreflow",
-        uploadedBy: adminUser._id,
-        tags: ["AI Tools", "AI News", "Generative AI", "Weekly Wrap"],
-        isPublished: true,
-      },
-      {
-        title: "Two Minute Papers",
-        description: "Dr. Károly Zsolnai-Fehér covers cutting-edge computer graphics, neural physics simulators, robotics, and generative vision papers.",
-        departmentId: deptMap["CSE"],
-        subjectId: subjectMap["CS3452"],
-        type: "youtube",
-        externalUrl: "https://www.youtube.com/channel/UCbfYPyITQ-7l4upoX8nvctg",
-        uploadedBy: adminUser._id,
-        tags: ["Computer Graphics", "AI Research", "Simulations", "Physics"],
-        isPublished: true,
-      },
-    ]);
+    // Dummy resources removed as requested
+    await Resource.insertMany([]);
 
     console.log("🏢 Seeding Company Blueprints...");
     await Company.insertMany([
@@ -1448,7 +1320,7 @@ async function seedDatabase() {
     
     // Seed 5 Official Course Assessment Tests in DailyTest Collection
     const createdTests = await Promise.all([
-      DailyTest.create({
+      CourseAssessment.create({
         courseId: aiCourse._id,
         title: "Applied AI & ML — Official 10-Question Course Assessment",
         category: "Artificial Intelligence",
@@ -1467,7 +1339,7 @@ async function seedDatabase() {
         isPublished: true,
         questions: aiQuestions,
       }),
-      DailyTest.create({
+      CourseAssessment.create({
         courseId: mernCourse._id,
         title: "Full-Stack Web Dev (React 19 & Node) — Official 10-Question Course Assessment",
         category: "Web Development",
@@ -1486,7 +1358,7 @@ async function seedDatabase() {
         isPublished: true,
         questions: mernQuestions,
       }),
-      DailyTest.create({
+      CourseAssessment.create({
         courseId: pythonCourse._id,
         title: "Python Programming Masterclass — Official 10-Question Course Assessment",
         category: "Programming",
@@ -1505,7 +1377,7 @@ async function seedDatabase() {
         isPublished: true,
         questions: pythonQuestions,
       }),
-      DailyTest.create({
+      CourseAssessment.create({
         courseId: devopsCourse._id,
         title: "Cloud & DevOps Architecture — Official 10-Question Course Assessment",
         category: "Cloud & DevOps",
@@ -1524,7 +1396,7 @@ async function seedDatabase() {
         isPublished: true,
         questions: devopsQuestions,
       }),
-      DailyTest.create({
+      CourseAssessment.create({
         courseId: cyberCourse._id,
         title: "Cybersecurity Essentials — Official 10-Question Course Assessment",
         category: "Cybersecurity & Networks",
@@ -1661,7 +1533,7 @@ async function seedDatabase() {
     });
 
     console.log("🛡️ Seeding Test Violations Audit Data...");
-    const studentUser = users.find((u) => u.registerNumber === "732924CSE001");
+    const studentUser = users.find((u) => u.registerNumber === "732924CSR014");
     await TestViolation.insertMany([
       {
         studentId: studentUser._id,
@@ -1696,8 +1568,8 @@ async function seedDatabase() {
         verificationCode: "0X7B3F91A2",
         studentId: studentUser._id,
         courseId: pythonCourse._id,
-        studentName: studentUser.name || "Kavya Dharshini S",
-        registerNumber: studentUser.registerNumber || "732924CSE001",
+        studentName: studentUser.name || "Athithyan S",
+        registerNumber: studentUser.registerNumber || "732924CSR014",
         courseName: "Python Programming Masterclass",
         instructorName: "Dr. K. Sathish Kumar (CSE)",
         score: 95,
@@ -1710,8 +1582,8 @@ async function seedDatabase() {
         verificationCode: "0X9E14C05D",
         studentId: studentUser._id,
         courseId: mernCourse._id,
-        studentName: studentUser.name || "Kavya Dharshini S",
-        registerNumber: studentUser.registerNumber || "732924CSE001",
+        studentName: studentUser.name || "Athithyan S",
+        registerNumber: studentUser.registerNumber || "732924CSR014",
         courseName: "Full Stack Web Development (MERN)",
         instructorName: "Dr. S. K. Nandhakumar (CSE)",
         score: 88,
@@ -1764,7 +1636,7 @@ async function seedDatabase() {
     console.log("========================================================");
     console.log("👤 Admin:   username: admin           | password: admin123");
     console.log("👨‍🏫 Teacher: staffId:  VCET-FAC-CSE-104 | password: faculty123");
-    console.log("🎓 Student: regNumber: 732924CSE001   | dateOfBirth: 2007-09-20 (dd/MM/yyyy: 20/09/2007)");
+    console.log("🎓 Student: regNumber: 732924CSR014   | dateOfBirth: 2006-07-20 (dd/MM/yyyy: 20/07/2006)");
     console.log("🎓 Student: regNumber: 732924CSE042   | dateOfBirth: 2007-05-11 (dd/MM/yyyy: 11/05/2007)");
     console.log("========================================================\n");
 

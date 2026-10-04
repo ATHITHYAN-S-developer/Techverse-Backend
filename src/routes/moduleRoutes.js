@@ -16,8 +16,8 @@ const router = express.Router();
 router.get("/", getModules);
 router.get("/:id", getModuleById);
 router.post("/:id/submit-quiz", authenticate, submitModuleQuiz);
-router.post("/", authenticate, authorize("teacher", "admin"), checkModuleCourseOwnership, createModule);
-router.put("/:id", authenticate, authorize("teacher", "admin"), checkModuleCourseOwnership, updateModule);
-router.delete("/:id", authenticate, authorize("teacher", "admin"), checkModuleCourseOwnership, deleteModule);
+router.post("/", authenticate, authorize("faculty", "teacher", "hod", "admin"), checkModuleCourseOwnership, createModule);
+router.put("/:id", authenticate, authorize("faculty", "teacher", "hod", "admin"), checkModuleCourseOwnership, updateModule);
+router.delete("/:id", authenticate, authorize("faculty", "teacher", "hod", "admin"), checkModuleCourseOwnership, deleteModule);
 
 export default router;

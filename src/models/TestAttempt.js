@@ -10,7 +10,7 @@ const testAttemptSchema = new mongoose.Schema(
     },
     testId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "DailyTest",
+      ref: "CourseAssessment",
       required: true,
       index: true,
     },
@@ -33,10 +33,6 @@ const testAttemptSchema = new mongoose.Schema(
     passed: {
       type: Boolean,
       required: true,
-    },
-    pointsEarned: {
-      type: Number,
-      default: 0,
     },
     attemptNumber: {
       type: Number,

@@ -1,42 +1,22 @@
-import { DailyTest } from "../models/DailyTest.js";
+import { CourseAssessment } from "../models/CourseAssessment.js";
 import { TestAttempt } from "../models/TestAttempt.js";
 import { TestViolation } from "../models/TestViolation.js";
-import { User } from "../models/User.js";
 import { Course } from "../models/Course.js";
 import { CourseModule } from "../models/CourseModule.js";
 import { ModuleProgress } from "../models/ModuleProgress.js";
-import { awardPoints } from "../services/pointsService.js";
 import { updateStreakOnActivity } from "../services/streakService.js";
 
-/**
- * @route   GET /api/tests/today
- * @desc    Get current daily test (sanitized for student - NO answers)
- * @access  Public / Protected
- */
-export async function getTodayTest(req, res, next) {
+export async function getCourseAssessmentForCourse(req, res, next) {
   try {
-    const test = await DailyTest.findOne({ isPublished: true }).sort({ createdAt: -1 });
-
-    if (!test) {
-      return res.status(404).json({ success: false, message: "No daily test available today." });
+    const course = await Course.findOne({ slug: req.params.courseSlug }).select("_id");
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found." });
     }
 
-    // Always sanitize student-facing tests (Never send correctAnswer or explanation)
-    const isElevated = req.user && (req.user.role === "admin" || req.user.role === "teacher");
-    const testData = isElevated ? test : test.toStudentSafeObject();
-
-    let previousAttempt = null;
-    if (req.user && req.user.role === "student") {
-      previousAttempt = await TestAttempt.findOne({
-        studentId: req.user._id,
-        testId: test._id,
-      }).sort({ createdAt: -1 });
-    }
-
+    const assessment = await CourseAssessment.findOne({ courseId: course._id, isPublished: true });
     res.json({
       success: true,
-      test: testData,
-      previousAttempt,
+      test: assessment ? assessment.toStudentSafeObject() : null,
     });
   } catch (error) {
     next(error);
@@ -44,47 +24,19 @@ export async function getTodayTest(req, res, next) {
 }
 
 /**
- * @route   GET /api/tests
- * @desc    Get all daily/practice tests
- * @access  Public / Protected
- */
-export async function getDailyTests(req, res, next) {
-  try {
-    const { category, difficulty, courseId } = req.query;
-    const query = { isPublished: true };
-
-    if (category) query.category = category;
-    if (difficulty) query.difficulty = difficulty;
-    if (courseId) query.courseId = courseId;
-
-    const tests = await DailyTest.find(query).sort({ day: 1, createdAt: -1 });
-
-    const isElevated = req.user && (req.user.role === "admin" || req.user.role === "teacher");
-    const sanitizedTests = tests.map((t) => (isElevated ? t : t.toStudentSafeObject()));
-
-    res.json({
-      success: true,
-      tests: sanitizedTests,
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-
-/**
- * @route   GET /api/tests/:id
- * @desc    Get single test by ID with course completion gating
- * @access  Public / Protected
+ * @route   GET /api/course-assessments/:courseSlug/:assessmentId
+ * @desc    Get a course-final assessment by course and ID
+ * @access  Protected (Student)
  */
 export async function getTestById(req, res, next) {
   try {
-    const test = await DailyTest.findById(req.params.id);
-    if (!test || !test.isPublished) {
-      return res.status(404).json({ success: false, message: "Test not found." });
+    const course = await Course.findOne({ slug: req.params.courseSlug }).select("_id slug");
+    const test = await CourseAssessment.findById(req.params.assessmentId);
+    if (!course || !test || !test.isPublished || String(test.courseId) !== String(course._id)) {
+      return res.status(404).json({ success: false, message: "Course assessment not found." });
     }
 
-    const isElevated = req.user && (req.user.role === "admin" || req.user.role === "teacher");
-    const testData = isElevated ? test.toObject() : test.toStudentSafeObject();
+    const testData = test.toStudentSafeObject();
 
     let isLocked = false;
     let lockReason = "";
@@ -92,7 +44,7 @@ export async function getTestById(req, res, next) {
     let completedModulesCount = 0;
     let courseSlug = null;
 
-    if (test.courseId && req.user && req.user.role === "student") {
+    if (req.user?.role === "student") {
       const course = await Course.findById(test.courseId);
       if (course) {
         courseSlug = course.slug;
@@ -128,18 +80,14 @@ export async function getTestById(req, res, next) {
 }
 
 /**
- * @route   POST /api/tests/:id/submit
- * @desc    Submit test answers, evaluate strictly on backend, award points & update streak
+ * @route   POST /api/course-assessments/:courseSlug/:assessmentId/submit
+ * @desc    Submit a course-final assessment, evaluate on the backend, award points & update streak
  * @access  Protected (Student)
  */
 export async function submitTest(req, res, next) {
   try {
-    const testId = req.params.id;
-    let studentId = req.user?._id;
-    if (!studentId) {
-      const defaultStudent = await User.findOne({ role: "student" });
-      studentId = defaultStudent?._id;
-    }
+    const testId = req.params.assessmentId;
+    const studentId = req.user._id;
 
     const {
       answers = [],
@@ -148,9 +96,10 @@ export async function submitTest(req, res, next) {
       timeSpentSeconds = 0,
     } = req.body;
 
-    const test = await DailyTest.findById(testId);
-    if (!test) {
-      return res.status(404).json({ success: false, message: "Test not found." });
+    const course = await Course.findOne({ slug: req.params.courseSlug }).select("_id");
+    const test = await CourseAssessment.findById(testId);
+    if (!course || !test || String(test.courseId) !== String(course._id)) {
+      return res.status(404).json({ success: false, message: "Course assessment not found." });
     }
 
     // Gate final course assessments: Must complete all module tests first
@@ -232,22 +181,6 @@ export async function submitTest(req, res, next) {
     const percentage = totalMarks > 0 ? Math.round((score / totalMarks) * 100) : 0;
     const passed = percentage >= (test.passingPercentage || 60);
 
-    let pointsEarned = 0;
-    if (passed) {
-      pointsEarned += test.pointsReward || 10;
-      if (percentage === 100 && violations.length === 0) {
-        pointsEarned += test.bonusPoints || 5;
-      }
-      if (studentId) {
-        await awardPoints(studentId, pointsEarned, "daily_test", `Completed daily test: ${test.title}`);
-      }
-    } else {
-      pointsEarned = 2;
-      if (studentId) {
-        await awardPoints(studentId, pointsEarned, "daily_test", `Participated in test: ${test.title}`);
-      }
-    }
-
     if (studentId) {
       await updateStreakOnActivity(studentId);
       await TestAttempt.create({
@@ -258,7 +191,6 @@ export async function submitTest(req, res, next) {
         totalMarks,
         percentage,
         passed,
-        pointsEarned,
         attemptNumber: attemptsCount + 1,
         userAnswers,
         violationsCount: violations.length,
@@ -276,7 +208,6 @@ export async function submitTest(req, res, next) {
         totalMarks,
         percentage,
         passed,
-        pointsEarned,
         violationsCount: violations.length,
         submissionType,
         breakdown: questionBreakdown,
@@ -288,23 +219,27 @@ export async function submitTest(req, res, next) {
 }
 
 /**
- * @route   POST /api/tests/:id/violation
- * @desc    Record security violation event during MCQ test
+ * @route   POST /api/course-assessments/:courseSlug/:assessmentId/violation
+ * @desc    Record security violation during a course-final assessment
  * @access  Private (Student)
  */
 export async function recordTestViolation(req, res, next) {
   try {
-    const { id } = req.params;
+    const { courseSlug, assessmentId } = req.params;
     const { type, details = {}, currentViolationCount = 1 } = req.body;
     const studentId = req.user._id;
 
-    const test = await DailyTest.findById(id);
+    const course = await Course.findOne({ slug: courseSlug }).select("_id");
+    const test = await CourseAssessment.findById(assessmentId);
+    if (!course || !test || String(test.courseId) !== String(course._id)) {
+      return res.status(404).json({ success: false, message: "Course assessment not found." });
+    }
     const maxViolations = test?.maxViolations || 3;
 
     const violation = await TestViolation.create({
       studentId,
       testType: "mcq",
-      testId: id,
+      testId: assessmentId,
       type,
       details: typeof details === "string" ? details : JSON.stringify(details),
       metadata: details,
@@ -329,71 +264,3 @@ export async function recordTestViolation(req, res, next) {
   }
 }
 
-/**
- * @route   GET /api/tests/my/attempts
- * @desc    Get student's test attempt history
- * @access  Protected (Student)
- */
-export async function getMyAttempts(req, res, next) {
-  try {
-    const attempts = await TestAttempt.find({ studentId: req.user._id })
-      .populate("testId", "title category difficulty")
-      .sort({ createdAt: -1 })
-      .limit(50);
-
-    res.json({
-      success: true,
-      attempts,
-    });
-  } catch (error) {
-    next(error);
-  }
-}
-
-/**
- * @route   POST /api/tests
- * @desc    Create new test
- * @access  Protected (Teacher / Admin)
- */
-export async function createTest(req, res, next) {
-  try {
-    const test = await DailyTest.create(req.body);
-    res.status(201).json({ success: true, message: "Test created successfully.", test });
-  } catch (error) {
-    next(error);
-  }
-}
-
-/**
- * @route   PUT /api/tests/:id
- * @desc    Update test
- * @access  Protected (Teacher / Admin)
- */
-export async function updateTest(req, res, next) {
-  try {
-    const test = await DailyTest.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!test) {
-      return res.status(404).json({ success: false, message: "Test not found." });
-    }
-    res.json({ success: true, message: "Test updated successfully.", test });
-  } catch (error) {
-    next(error);
-  }
-}
-
-/**
- * @route   DELETE /api/tests/:id
- * @desc    Delete test
- * @access  Protected (Teacher / Admin)
- */
-export async function deleteTest(req, res, next) {
-  try {
-    const test = await DailyTest.findByIdAndDelete(req.params.id);
-    if (!test) {
-      return res.status(404).json({ success: false, message: "Test not found." });
-    }
-    res.json({ success: true, message: "Test deleted." });
-  } catch (error) {
-    next(error);
-  }
-}

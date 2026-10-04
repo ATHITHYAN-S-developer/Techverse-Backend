@@ -158,11 +158,13 @@ const courseModuleSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    // Content flags: Video is ALWAYS true (mandatory)
     hasVideo: {
       type: Boolean,
-      default: true,
-      required: true,
+      default: false,
+    },
+    isVideoMandatory: {
+      type: Boolean,
+      default: false,
     },
     hasCoding: {
       type: Boolean,
@@ -221,15 +223,9 @@ const courseModuleSchema = new mongoose.Schema(
 
 courseModuleSchema.index({ courseId: 1, moduleNumber: 1 });
 
-// Ensure hasVideo is always true
+// Sync legacy videoUrl with the first video if available
 courseModuleSchema.pre("validate", function (next) {
-  if (this.hasVideo === false) {
-    return next(new Error("Video is mandatory for all course modules. hasVideo cannot be false."));
-  }
-  this.hasVideo = true;
-
-  // Sync legacy videoUrl with the first video if available
-  if (this.videos && this.videos.length > 0 && !this.videoUrl) {
+  if (this.hasVideo && this.videos && this.videos.length > 0 && !this.videoUrl) {
     this.videoUrl = this.videos[0].youtubeUrl;
   }
   next();

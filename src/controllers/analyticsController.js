@@ -15,7 +15,7 @@ import { Resource } from "../models/Resource.js";
 import { User } from "../models/User.js";
 import { TestViolation } from "../models/TestViolation.js";
 import { CodingSubmission } from "../models/CodingSubmission.js";
-import { DailyTest } from "../models/DailyTest.js";
+import { CourseAssessment } from "../models/CourseAssessment.js";
 import { CodingTest } from "../models/CodingTest.js";
 
 /**
@@ -44,6 +44,7 @@ export async function getOverview(req, res, next) {
     // Recharts-ready test performance data, bucketed on the local calendar day
     // so it lines up with the visitor trend and activity series.
     const recentTests = await TestAttempt.aggregate([
+      { $match: { courseId: { $ne: null } } },
       {
         $group: {
           _id: {
@@ -62,7 +63,7 @@ export async function getOverview(req, res, next) {
       { $limit: 14 },
     ]);
 
-    const testTrends = recentTests.map((t) => ({
+    const courseAssessmentTrends = recentTests.map((t) => ({
       date: t._id,
       attempts: t.totalAttempts,
       avgScore: Math.round(t.avgScore),
@@ -75,7 +76,7 @@ export async function getOverview(req, res, next) {
       departmentDistribution,
       courseStats,
       visitorTrends,
-      testTrends,
+      courseAssessmentTrends,
       activityTelemetry,
     });
   } catch (error) {
@@ -94,9 +95,11 @@ export async function getStudentAnalytics(req, res, next) {
 
     const [enrollments, testAttempts, certificates, user] = await Promise.all([
       Enrollment.find({ studentId }).populate("courseId", "title category"),
-      TestAttempt.find({ studentId }).populate("testId", "title difficulty").sort({ createdAt: -1 }),
+      TestAttempt.find({ studentId, courseId: { $ne: null } })
+        .populate("testId", "title difficulty")
+        .sort({ createdAt: -1 }),
       Certificate.find({ studentId }).populate("courseId", "title"),
-      User.findById(studentId).select("points streak"),
+         User.findById(studentId).select("streak"),
     ]);
 
     const completedCoursesCount = enrollments.filter((e) => e.status === "completed").length;
@@ -108,7 +111,7 @@ export async function getStudentAnalytics(req, res, next) {
         ? Math.round(testAttempts.reduce((acc, t) => acc + t.percentage, 0) / totalTestsTaken)
         : 0;
 
-    // Daily test score progress (last 10 tests for Recharts line chart)
+    // Course-final assessment score history (last 10 attempts).
     const scoreHistory = testAttempts
       .slice(0, 10)
       .reverse()
@@ -116,15 +119,12 @@ export async function getStudentAnalytics(req, res, next) {
         index: idx + 1,
         title: t.testId?.title?.substring(0, 15) || `Test ${idx + 1}`,
         score: t.percentage,
-        points: t.pointsEarned,
         date: new Date(t.attemptedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       }));
 
     res.json({
       success: true,
       stats: {
-        points: user?.points?.totalPoints || 0,
-        level: user?.points?.level || 1,
         currentStreak: user?.streak?.currentStreak || 0,
         longestStreak: user?.streak?.longestStreak || 0,
         completedCourses: completedCoursesCount,
@@ -155,7 +155,7 @@ export async function getDepartmentDetails(req, res, next) {
 
     const [students, teachers, resources, subjects] = await Promise.all([
       User.countDocuments({ departmentId, role: "student", isActive: true }),
-      User.countDocuments({ departmentId, role: "teacher", isActive: true }),
+      User.countDocuments({ departmentId, role: { $in: ["teacher", "faculty", "hod"] }, isActive: true }),
       Resource.find({ departmentId, isPublished: true }).select("type downloadsCount createdAt"),
       Resource.countDocuments({ departmentId, isPublished: true }),
     ]);
@@ -193,17 +193,17 @@ export async function getViolationsAnalytics(req, res, next) {
       totalCodingSubmissions,
       autoSubmittedCoding,
       totalViolationCount,
-      activeDailyTests,
+      activeCourseAssessments,
       activeCodingTests,
       violationLogs,
       typeDistribution,
     ] = await Promise.all([
-      TestAttempt.countDocuments(),
-      TestAttempt.countDocuments({ submissionType: "auto_violation" }),
+      TestAttempt.countDocuments({ courseId: { $ne: null } }),
+      TestAttempt.countDocuments({ courseId: { $ne: null }, submissionType: "auto_violation" }),
       CodingSubmission.countDocuments(),
       CodingSubmission.countDocuments({ submissionType: "auto_violation" }),
       TestViolation.countDocuments(),
-      DailyTest.countDocuments({ isPublished: true }),
+      CourseAssessment.countDocuments({ isPublished: true }),
       CodingTest.countDocuments({ isPublished: true }),
       TestViolation.find()
         .populate("studentId", "name registerNumber staffId email departmentId")
@@ -247,8 +247,8 @@ export async function getViolationsAnalytics(req, res, next) {
         totalCompleted,
         totalAutoSubmitted,
         totalViolations,
-        activeTests: activeDailyTests + activeCodingTests,
-        activeDailyTests,
+        activeTests: activeCourseAssessments + activeCodingTests,
+        activeCourseAssessments,
         activeCodingTests,
       },
       violationDistribution: {

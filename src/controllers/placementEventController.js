@@ -46,10 +46,13 @@ function resolvePosterFields({ poster, imageUrl, image, file }) {
  */
 export async function getPlacementEvents(req, res, next) {
   try {
-    const { category, departmentId, search, includePast } = req.query;
-    const { page: safePage, limit: safeLimit, skip } = getPagination(req.query, 50);
+    const { category, departmentId, search, includePast, all } = req.query;
+    const { page: safePage, limit: safeLimit, skip } = getPagination(req.query, 100);
 
-    const query = { isActive: true };
+    const query = {};
+    if (all !== "true") {
+      query.isActive = true;
+    }
 
     if (category && category !== "all") query.category = category;
     if (departmentId) query.departmentId = departmentId;
@@ -57,9 +60,6 @@ export async function getPlacementEvents(req, res, next) {
       const rx = new RegExp(String(search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       query.$or = [{ title: rx }, { subtitle: rx }, { organiser: rx }, { description: rx }];
     }
-    // The page drops past-dated drives on its own (isPastEvent), so by default
-    // the API still exposes everything and lets the client decide. Pass
-    // includePast=false to have the server filter to today onwards.
     if (includePast === "false") {
       query.date = { $gte: toUtcMidnight(new Date()) };
     }
@@ -257,7 +257,7 @@ export async function updatePlacementEvent(req, res, next) {
 
 /**
  * @route   DELETE /api/placement-events/:id
- * @desc    Soft delete a placement event
+ * @desc    Delete a placement event permanently
  * @access  Protected (Teacher / Admin)
  */
 export async function deletePlacementEvent(req, res, next) {
@@ -278,8 +278,7 @@ export async function deletePlacementEvent(req, res, next) {
       }
     }
 
-    placementEvent.isActive = false;
-    await placementEvent.save();
+    await PlacementEvent.findByIdAndDelete(req.params.id);
 
     await logAuditEvent({
       userId: req.user._id,
@@ -288,13 +287,13 @@ export async function deletePlacementEvent(req, res, next) {
       role: req.user.role,
       action: "DELETE",
       resourceType: "PlacementEvent",
-      resourceId: placementEvent._id.toString(),
-      details: `Removed placement event '${placementEvent.title}'`,
+      resourceId: req.params.id,
+      details: `Permanently removed placement event '${placementEvent.title}'`,
     });
 
     res.json({
       success: true,
-      message: "Placement event removed.",
+      message: "Placement event permanently removed.",
     });
   } catch (error) {
     next(error);
