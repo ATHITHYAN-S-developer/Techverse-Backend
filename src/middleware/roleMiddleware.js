@@ -2,8 +2,11 @@ export function authorize(...roles) {
   const allowed = new Set();
   roles.forEach((r) => {
     allowed.add(r);
-    if (r === "faculty") allowed.add("teacher");
-    if (r === "teacher") allowed.add("faculty");
+    if (r === "faculty" || r === "teacher") {
+      allowed.add("faculty");
+      allowed.add("teacher");
+      allowed.add("hod");
+    }
   });
 
   return (req, res, next) => {

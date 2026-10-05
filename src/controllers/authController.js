@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import { User } from "../models/User.js";
 import { ENV } from "../config/env.js";
 import { logAuditEvent } from "../services/auditService.js";
@@ -75,7 +76,7 @@ export async function login(req, res, next) {
         { email: cleanIdentifier.toLowerCase() },
       ];
     } else if (role === "faculty" || role === "teacher") {
-      query.role = { $in: ["faculty", "teacher"] };
+      query.role = { $in: ["faculty", "teacher", "hod"] };
       query.$or = [
         { staffId: cleanIdentifier.toUpperCase() },
         { email: cleanIdentifier.toLowerCase() },
@@ -193,20 +194,29 @@ export async function getMe(req, res, next) {
  */
 export async function updateProfile(req, res, next) {
   try {
-    const { name, profileImage, email } = req.body;
+    const { name, profileImage, email, phone, contactPhone, bio } = req.body;
     const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+        code: "USER_NOT_FOUND",
+      });
+    }
 
     if (name) user.name = name;
     if (profileImage !== undefined) user.profileImage = profileImage;
-    if (email !== undefined) {
-      if (user.role !== "student") {
-        return res.status(403).json({
-          success: false,
-          message: "Only students can update their institutional email address.",
-          code: "EMAIL_UPDATE_FORBIDDEN",
-        });
-      }
+    if (phone !== undefined || contactPhone !== undefined) {
+      const p = phone !== undefined ? String(phone).trim() : String(contactPhone).trim();
+      user.phone = p;
+      user.contactPhone = p;
+    }
+    if (bio !== undefined) {
+      user.bio = String(bio).trim();
+    }
 
+    if (email !== undefined) {
       const normalizedEmail = String(email).trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
         return res.status(400).json({
@@ -229,6 +239,31 @@ export async function updateProfile(req, res, next) {
     }
 
     await user.save();
+
+    // Explicitly sync fields to role collection (hods, faculties, students, admins)
+    const db = mongoose.connection.db;
+    if (db) {
+      const r = user.role;
+      let targetCollName = "students";
+      if (r === "faculty" || r === "teacher") targetCollName = "faculties";
+      else if (r === "hod") targetCollName = "hods";
+      else if (r === "admin") targetCollName = "admins";
+
+      await db.collection(targetCollName).updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+            contactPhone: user.contactPhone,
+            bio: user.bio,
+            ...(user.profileImage ? { profileImage: user.profileImage } : {}),
+            updatedAt: new Date(),
+          },
+        }
+      );
+    }
 
     res.json({
       success: true,
@@ -270,6 +305,20 @@ export async function changePassword(req, res, next) {
     user.password = newPassword; // Plain text
     await user.save();
 
+    const db = mongoose.connection.db;
+    if (db) {
+      const r = user.role;
+      let targetCollName = "students";
+      if (r === "faculty" || r === "teacher") targetCollName = "faculties";
+      else if (r === "hod") targetCollName = "hods";
+      else if (r === "admin") targetCollName = "admins";
+
+      await db.collection(targetCollName).updateOne(
+        { _id: user._id },
+        { $set: { password: newPassword, updatedAt: new Date() } }
+      );
+    }
+
     res.json({
       success: true,
       message: "Password changed successfully.",
@@ -278,3 +327,80 @@ export async function changePassword(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * @route   POST /api/auth/faculty-reset-password
+ * @desc    Public password reset endpoint for faculty / HOD
+ * @access  Public
+ */
+export async function facultyResetPassword(req, res, next) {
+  try {
+    const { identifier, newPassword } = req.body;
+    if (!identifier || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide staff ID or email and a new password.",
+      });
+    }
+
+    if (String(newPassword).length < 4) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be at least 4 characters long.",
+      });
+    }
+
+    const cleanId = String(identifier).trim();
+    const user = await User.findOne({
+      role: { $in: ["faculty", "teacher", "hod"] },
+      $or: [
+        { staffId: cleanId.toUpperCase() },
+        { email: cleanId.toLowerCase() },
+        { username: cleanId.toLowerCase() },
+      ],
+    }).select("+password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "No faculty or HOD found with the provided Staff ID / Email.",
+      });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    const db = mongoose.connection.db;
+    if (db) {
+      const r = user.role;
+      let targetCollName = "students";
+      if (r === "faculty" || r === "teacher") targetCollName = "faculties";
+      else if (r === "hod") targetCollName = "hods";
+      else if (r === "admin") targetCollName = "admins";
+
+      await db.collection(targetCollName).updateOne(
+        { _id: user._id },
+        { $set: { password: newPassword, updatedAt: new Date() } }
+      );
+    }
+
+    await logAuditEvent({
+      userId: user._id,
+      userIdentifier: user.staffId || user.email,
+      userName: user.name,
+      role: user.role,
+      action: "PASSWORD_RESET",
+      resourceType: "User",
+      details: `Password reset for ${user.role.toUpperCase()} (${user.name})`,
+      ipAddress: req.ip || "127.0.0.1",
+    });
+
+    res.json({
+      success: true,
+      message: "Password reset successfully! You can now sign in with your new password.",
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+

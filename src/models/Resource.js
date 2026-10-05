@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import "./User.js";
 
 const resourceSchema = new mongoose.Schema(
   {
@@ -84,8 +85,8 @@ const resourceSchema = new mongoose.Schema(
     },
     uploaderRole: {
       type: String,
-      enum: ["teacher", "admin", "student"],
-      default: "teacher",
+      enum: ["teacher", "faculty", "hod", "admin", "student"],
+      default: "faculty",
     },
     fileSize: {
       type: String,

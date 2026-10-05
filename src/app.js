@@ -4,6 +4,9 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
+// Ensure User model is registered before any route handlers execute
+import "./models/User.js";
+
 // Middlewares
 import { notFoundHandler } from "./middleware/notFoundMiddleware.js";
 import { errorHandler } from "./middleware/errorMiddleware.js";

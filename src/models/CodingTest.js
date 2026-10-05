@@ -39,6 +39,14 @@ const problemSchema = new mongoose.Schema(
       enum: ["Easy", "Medium", "Hard"],
       default: "Medium",
     },
+    author: {
+      type: String,
+      default: "",
+    },
+    createdByName: {
+      type: String,
+      default: "",
+    },
     tags: [String],
     inputFormat: {
       type: String,

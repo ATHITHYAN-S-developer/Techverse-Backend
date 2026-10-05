@@ -13,7 +13,13 @@ export async function getUsers(req, res, next) {
     const { page, limit, skip } = getPagination(req.query, 100);
 
     const query = { isActive: true };
-    if (role) query.role = role;
+    if (role) {
+      if (role === "faculty" || role === "teacher") {
+        query.role = { $in: ["faculty", "teacher", "hod"] };
+      } else {
+        query.role = role;
+      }
+    }
     if (departmentId) query.departmentId = departmentId;
 
     if (search) {

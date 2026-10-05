@@ -19,7 +19,7 @@ router.get("/:id", getResourceById);
 router.post(
   "/",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("faculty", "teacher", "hod", "admin"),
   uploadResourceFile.single("file"),
   enforceDepartmentMatch,
   createResource
@@ -27,7 +27,7 @@ router.post(
 router.put(
   "/:id",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("faculty", "teacher", "hod", "admin"),
   checkDepartmentAccess("resource"),
   uploadResourceFile.single("file"),
   updateResource
@@ -35,7 +35,7 @@ router.put(
 router.delete(
   "/:id",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("faculty", "teacher", "hod", "admin"),
   checkDepartmentAccess("resource"),
   deleteResource
 );

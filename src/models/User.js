@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Student } from "./Student.js";
 import { Faculty } from "./Faculty.js";
 import { Hod } from "./Hod.js";
@@ -5,331 +6,264 @@ import { Admin } from "./Admin.js";
 
 export { Student, Faculty, Hod, Admin };
 
-const ALL_MODELS = [Student, Faculty, Hod, Admin];
-
-function getModelForRole(role) {
-  if (!role) return null;
-  if (role === "student") return Student;
-  if (role === "faculty" || role === "teacher") return Faculty;
-  if (role === "hod") return Hod;
-  if (role === "admin") return Admin;
-  return null;
-}
-
-function createChainableFindById(id) {
-  const operations = [];
-  const chain = {
-    select(fields) {
-      operations.push((q) => q.select(fields));
-      return chain;
+const pointsSchema = new mongoose.Schema(
+  {
+    totalPoints: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
-    populate(...args) {
-      operations.push((q) => q.populate(...args));
-      return chain;
+    level: {
+      type: Number,
+      default: 1,
+      min: 1,
     },
-    lean() {
-      operations.push((q) => q.lean());
-      return chain;
+    rank: {
+      type: Number,
+      default: 1,
     },
-    async then(resolve, reject) {
-      try {
-        for (const Model of ALL_MODELS) {
-          let q = Model.findById(id);
-          for (const op of operations) q = op(q);
-          const doc = await q;
-          if (doc) return resolve(doc);
-        }
-        return resolve(null);
-      } catch (err) {
-        if (reject) return reject(err);
-        throw err;
-      }
-    },
-    catch(reject) {
-      return chain.then(null, reject);
-    },
-  };
-  return chain;
-}
-
-function createChainableFindOne(query = {}) {
-  const operations = [];
-  const chain = {
-    select(fields) {
-      operations.push((q) => q.select(fields));
-      return chain;
-    },
-    populate(...args) {
-      operations.push((q) => q.populate(...args));
-      return chain;
-    },
-    lean() {
-      operations.push((q) => q.lean());
-      return chain;
-    },
-    async then(resolve, reject) {
-      try {
-        let modelsToSearch = ALL_MODELS;
-        if (query.role) {
-          if (typeof query.role === "string") {
-            const m = getModelForRole(query.role);
-            if (m) modelsToSearch = [m];
-          } else if (query.role.$in) {
-            const mapped = query.role.$in.map(getModelForRole).filter(Boolean);
-            if (mapped.length > 0) modelsToSearch = [...new Set(mapped)];
-          }
-        }
-        for (const Model of modelsToSearch) {
-          let q = Model.findOne(query);
-          for (const op of operations) q = op(q);
-          const doc = await q;
-          if (doc) return resolve(doc);
-        }
-        return resolve(null);
-      } catch (err) {
-        if (reject) return reject(err);
-        throw err;
-      }
-    },
-    catch(reject) {
-      return chain.then(null, reject);
-    },
-  };
-  return chain;
-}
-
-function createChainableFind(query = {}) {
-  const operations = [];
-  let sortOption = null;
-  let skipVal = 0;
-  let limitVal = null;
-  const chain = {
-    select(fields) {
-      operations.push((q) => q.select(fields));
-      return chain;
-    },
-    populate(...args) {
-      operations.push((q) => q.populate(...args));
-      return chain;
-    },
-    sort(sortArg) {
-      sortOption = sortArg;
-      operations.push((q) => q.sort(sortArg));
-      return chain;
-    },
-    skip(skipCount) {
-      skipVal = Number(skipCount) || 0;
-      return chain;
-    },
-    limit(limitCount) {
-      limitVal = Number(limitCount);
-      return chain;
-    },
-    lean() {
-      operations.push((q) => q.lean());
-      return chain;
-    },
-    async then(resolve, reject) {
-      try {
-        let modelsToSearch = ALL_MODELS;
-        if (query.role) {
-          if (typeof query.role === "string") {
-            const m = getModelForRole(query.role);
-            if (m) modelsToSearch = [m];
-          } else if (query.role.$in) {
-            const mapped = query.role.$in.map(getModelForRole).filter(Boolean);
-            if (mapped.length > 0) modelsToSearch = [...new Set(mapped)];
-          }
-        }
-
-        if (modelsToSearch.length === 1) {
-          let q = modelsToSearch[0].find(query);
-          for (const op of operations) q = op(q);
-          if (sortOption) q = q.sort(sortOption);
-          if (skipVal) q = q.skip(skipVal);
-          if (limitVal !== null && limitVal !== undefined) q = q.limit(limitVal);
-          const docs = await q;
-          return resolve(docs);
-        }
-
-        const results = await Promise.all(
-          modelsToSearch.map(async (Model) => {
-            let q = Model.find(query);
-            for (const op of operations) q = op(q);
-            return await q;
-          })
-        );
-        let allDocs = results.flat();
-        if (sortOption) {
-          const sortKey = typeof sortOption === "object" ? Object.keys(sortOption)[0] : sortOption;
-          const sortOrder = typeof sortOption === "object" ? Object.values(sortOption)[0] : 1;
-          allDocs.sort((a, b) => {
-            const valA = a[sortKey] || 0;
-            const valB = b[sortKey] || 0;
-            return sortOrder === -1 || sortOrder === "desc" ? (valB > valA ? 1 : -1) : (valA > valB ? 1 : -1);
-          });
-        }
-        if (skipVal) allDocs = allDocs.slice(skipVal);
-        if (limitVal !== null && limitVal !== undefined) allDocs = allDocs.slice(0, limitVal);
-        return resolve(allDocs);
-      } catch (err) {
-        if (reject) return reject(err);
-        throw err;
-      }
-    },
-    catch(reject) {
-      return chain.then(null, reject);
-    },
-  };
-  return chain;
-}
-
-export const User = {
-  Student,
-  Faculty,
-  Hod,
-  Admin,
-
-  findById(id) {
-    return createChainableFindById(id);
   },
+  { _id: false }
+);
 
-  findOne(query) {
-    return createChainableFindOne(query);
+const streakSchema = new mongoose.Schema(
+  {
+    currentStreak: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    longestStreak: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    lastActiveDate: {
+      type: String,
+      default: null,
+    },
+    freezeCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
+  { _id: false }
+);
 
-  find(query) {
-    return createChainableFind(query);
-  },
+const userSchema = new mongoose.Schema(
+  {
+    role: {
+      type: String,
+      enum: ["student", "teacher", "faculty", "hod", "admin"],
+      required: [true, "User role is required"],
+      index: true,
+    },
+    name: {
+      type: String,
+      required: [true, "Name is required"],
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      trim: true,
+      lowercase: true,
+    },
+    password: {
+      type: String,
+      required: [true, "Password is required"],
+      select: true,
+    },
 
-  async countDocuments(query = {}) {
-    let modelsToSearch = ALL_MODELS;
-    if (query.role) {
-      if (typeof query.role === "string") {
-        const m = getModelForRole(query.role);
-        if (m) modelsToSearch = [m];
-      } else if (query.role.$in) {
-        const mapped = query.role.$in.map(getModelForRole).filter(Boolean);
-        if (mapped.length > 0) modelsToSearch = [...new Set(mapped)];
-      }
-    }
-    const counts = await Promise.all(modelsToSearch.map((M) => M.countDocuments(query)));
-    return counts.reduce((acc, c) => acc + c, 0);
-  },
+    // Student-specific fields
+    registerNumber: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+      index: true,
+    },
+    classId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Class",
+    },
+    year: {
+      type: Number,
+      min: 1,
+      max: 4,
+    },
+    semester: {
+      type: Number,
+      min: 1,
+      max: 8,
+    },
+    section: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+    dateOfBirth: {
+      type: Date,
+    },
+    courseCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+    courseName: {
+      type: String,
+      trim: true,
+    },
+    batchStartYear: {
+      type: Number,
+      min: 2000,
+      max: 2100,
+    },
+    batchEndYear: {
+      type: Number,
+      min: 2000,
+      max: 2100,
+    },
 
-  async create(data) {
-    const Model = getModelForRole(data.role) || Student;
-    return await Model.create(data);
-  },
+    // Teacher & Faculty & HOD specific fields
+    staffId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+    designation: {
+      type: String,
+      trim: true,
+      default: "Assistant Professor",
+    },
+    qualification: {
+      type: String,
+      trim: true,
+    },
+    experience: {
+      type: Number,
+      default: 0,
+    },
 
-  async insertMany(docs, options) {
-    const groups = { student: [], faculty: [], hod: [], admin: [] };
-    for (const doc of docs) {
-      const r = doc.role === "teacher" ? "faculty" : doc.role || "student";
-      if (groups[r]) groups[r].push(doc);
-      else groups.student.push(doc);
-    }
-    const inserted = [];
-    if (groups.student.length) inserted.push(...(await Student.insertMany(groups.student, options)));
-    if (groups.faculty.length) inserted.push(...(await Faculty.insertMany(groups.faculty, options)));
-    if (groups.hod.length) inserted.push(...(await Hod.insertMany(groups.hod, options)));
-    if (groups.admin.length) inserted.push(...(await Admin.insertMany(groups.admin, options)));
-    return inserted;
-  },
+    // Admin-specific fields
+    username: {
+      type: String,
+      trim: true,
+      lowercase: true,
+    },
 
-  async findByIdAndUpdate(id, update, options = { new: true }) {
-    for (const Model of ALL_MODELS) {
-      const updated = await Model.findByIdAndUpdate(id, update, options);
-      if (updated) return updated;
-    }
-    return null;
-  },
+    phone: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    contactPhone: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    bio: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    profileImage: {
+      type: String,
+      default: "",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    lastLoginAt: {
+      type: Date,
+    },
 
-  async findByIdAndDelete(id) {
-    for (const Model of ALL_MODELS) {
-      const deleted = await Model.findByIdAndDelete(id);
-      if (deleted) return deleted;
-    }
-    return null;
+    points: {
+      type: pointsSchema,
+      default: () => ({}),
+    },
+    streak: {
+      type: streakSchema,
+      default: () => ({}),
+    },
   },
+  {
+    timestamps: true,
+    strict: false,
+    collection: "users",
+  }
+);
 
-  async deleteMany(filter = {}) {
-    let modelsToSearch = ALL_MODELS;
-    if (filter.role) {
-      const m = getModelForRole(filter.role);
-      if (m) modelsToSearch = [m];
-    }
-    const results = await Promise.all(modelsToSearch.map((M) => M.deleteMany(filter)));
-    return {
-      deletedCount: results.reduce((acc, r) => acc + (r?.deletedCount || 0), 0),
-    };
-  },
+// Unique Sparse Indexes for identifiers
+userSchema.index({ registerNumber: 1 }, { unique: true, sparse: true });
+userSchema.index({ staffId: 1 }, { unique: true, sparse: true });
+userSchema.index({ username: 1 }, { unique: true, sparse: true });
+userSchema.index({ email: 1 }, { unique: true, sparse: true });
+userSchema.index({ "points.totalPoints": -1 });
+userSchema.index({ "streak.currentStreak": -1 });
+userSchema.index({ role: 1, courseCode: 1 });
+userSchema.index({ role: 1, batchStartYear: 1 });
 
-  async deleteOne(filter = {}) {
-    let modelsToSearch = ALL_MODELS;
-    if (filter.role) {
-      const m = getModelForRole(filter.role);
-      if (m) modelsToSearch = [m];
-    }
-    for (const Model of modelsToSearch) {
-      const res = await Model.deleteOne(filter);
-      if (res && res.deletedCount > 0) return res;
-    }
-    return { deletedCount: 0 };
-  },
-
-  async updateOne(filter, update, options) {
-    let modelsToSearch = ALL_MODELS;
-    if (filter.role) {
-      const m = getModelForRole(filter.role);
-      if (m) modelsToSearch = [m];
-    }
-    for (const Model of modelsToSearch) {
-      const res = await Model.updateOne(filter, update, options);
-      if (res && res.matchedCount > 0) return res;
-    }
-    return { matchedCount: 0, modifiedCount: 0 };
-  },
-
-  async updateMany(filter, update, options) {
-    let modelsToSearch = ALL_MODELS;
-    if (filter.role) {
-      const m = getModelForRole(filter.role);
-      if (m) modelsToSearch = [m];
-    }
-    let totalMatched = 0;
-    let totalModified = 0;
-    for (const Model of modelsToSearch) {
-      const res = await Model.updateMany(filter, update, options);
-      if (res) {
-        totalMatched += res.matchedCount || 0;
-        totalModified += res.modifiedCount || 0;
-      }
-    }
-    return { matchedCount: totalMatched, modifiedCount: totalModified };
-  },
-
-  async aggregate(pipeline) {
-    let modelsToSearch = ALL_MODELS;
-    const matchStage = pipeline.find((p) => p.$match);
-    if (matchStage && matchStage.$match.role) {
-      const r = matchStage.$match.role;
-      if (typeof r === "string") {
-        const m = getModelForRole(r);
-        if (m) modelsToSearch = [m];
-      } else if (r.$in) {
-        const mapped = r.$in.map(getModelForRole).filter(Boolean);
-        if (mapped.length > 0) modelsToSearch = [...new Set(mapped)];
-      }
-    }
-    const results = await Promise.all(modelsToSearch.map((M) => M.aggregate(pipeline)));
-    return results.flat();
-  },
-
-  async distinct(field, query = {}) {
-    const results = await Promise.all(ALL_MODELS.map((M) => M.distinct(field, query)));
-    return [...new Set(results.flat())];
-  },
+// Plain-text password comparison method
+userSchema.methods.comparePassword = function (enteredPassword) {
+  return String(enteredPassword || "") === String(this.password || "");
 };
+
+// Safe JSON serialization helper (strips password)
+userSchema.methods.toSafeObject = function () {
+  const obj = this.toObject ? this.toObject() : { ...this };
+  delete obj.password;
+  return obj;
+};
+
+// Sync hook to keep role-specific collections (students, faculties, hods, admins) updated
+userSchema.post("save", async function (doc) {
+  try {
+    const db = mongoose.connection.db;
+    if (!db) return;
+    const r = doc.role;
+    let targetCollName = "students";
+    if (r === "faculty" || r === "teacher") targetCollName = "faculties";
+    else if (r === "hod") targetCollName = "hods";
+    else if (r === "admin") targetCollName = "admins";
+
+    const rawDoc = doc.toObject ? doc.toObject() : { ...doc };
+    await db.collection(targetCollName).replaceOne(
+      { _id: doc._id },
+      rawDoc,
+      { upsert: true }
+    );
+  } catch (err) {
+    // Non-blocking sync error
+    console.error("[User Model Sync Error]:", err.message);
+  }
+});
+
+userSchema.post(["findOneAndDelete", "findByIdAndDelete"], async function (doc) {
+  if (!doc) return;
+  try {
+    const db = mongoose.connection.db;
+    if (!db) return;
+    for (const c of ["students", "faculties", "hods", "admins"]) {
+      await db.collection(c).deleteOne({ _id: doc._id });
+    }
+  } catch (err) {
+    console.error("[User Model Delete Sync Error]:", err.message);
+  }
+});
+
+export const User = mongoose.models.User || mongoose.model("User", userSchema, "users");
+
+// Attach role models for backwards compatibility
+User.Student = Student;
+User.Faculty = Faculty;
+User.Hod = Hod;
+User.Admin = Admin;
 
 export default User;

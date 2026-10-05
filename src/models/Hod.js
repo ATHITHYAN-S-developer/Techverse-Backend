@@ -52,6 +52,21 @@ const hodSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    phone: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    contactPhone: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    bio: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     profileImage: {
       type: String,
       default: "",

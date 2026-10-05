@@ -28,6 +28,7 @@ function handleRunError(error, req, res, next) {
 export async function getCodingTests(req, res, next) {
   try {
     const tests = await CodingTest.find({ isPublished: true })
+      .populate("createdBy", "name username staffId role")
       .select("-problems.hiddenTestCases")
       .sort({ createdAt: -1 });
 
@@ -49,10 +50,10 @@ export async function getCodingTests(req, res, next) {
 export async function getCodingTestById(req, res, next) {
   try {
     const { id } = req.params;
-    let test = await CodingTest.findById(id);
+    let test = await CodingTest.findById(id).populate("createdBy", "name username staffId role");
 
     if (!test) {
-      test = await CodingTest.findOne({ slug: id });
+      test = await CodingTest.findOne({ slug: id }).populate("createdBy", "name username staffId role");
     }
 
     if (!test) {

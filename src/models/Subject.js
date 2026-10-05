@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import "./User.js";
 
 const unitSchema = new mongoose.Schema(
   {
