@@ -408,9 +408,13 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     };
   });
 
+  const course = await Course.findById(courseId);
+  const requiredPassPercentage =
+    Number(course?.passingPercentage) || Number(course?.passingScore) || MIN_TEST_PASS_PERCENTAGE;
+
   const totalQuestions = mcqs.length;
   const scorePercentage = Math.round((correctCount / totalQuestions) * 100);
-  const passed = scorePercentage >= MIN_TEST_PASS_PERCENTAGE;
+  const passed = scorePercentage >= requiredPassPercentage;
 
   progress.testAttemptsCount = (progress.testAttemptsCount || 0) + 1;
   progress.testScore = scorePercentage;
@@ -418,7 +422,6 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
   progress.testCompletedAt = new Date();
 
   const studentUser = await User.findById(studentId);
-  const course = await Course.findById(courseId);
 
   let certificate = null;
   let courseCertificate = null;
@@ -526,7 +529,7 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     score: correctCount,
     totalQuestions,
     scorePercentage,
-    passingScorePercentage: MIN_TEST_PASS_PERCENTAGE,
+    passingScorePercentage: requiredPassPercentage,
     passed,
     status: progress.status,
     attemptNumber: progress.testAttemptsCount,

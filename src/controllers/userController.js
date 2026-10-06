@@ -1,5 +1,9 @@
+import mongoose from "mongoose";
 import { User } from "../models/User.js";
 import { Certificate } from "../models/Certificate.js";
+import { Resource } from "../models/Resource.js";
+import { Course } from "../models/Course.js";
+import { Department } from "../models/Department.js";
 import { getPagination } from "../utils/pagination.js";
 
 /**
@@ -20,7 +24,16 @@ export async function getUsers(req, res, next) {
         query.role = role;
       }
     }
-    if (departmentId) query.departmentId = departmentId;
+    if (departmentId) {
+      if (mongoose.Types.ObjectId.isValid(departmentId)) {
+        query.departmentId = departmentId;
+      } else {
+        query.$or = [
+          { departmentCode: departmentId },
+          { courseCode: departmentId },
+        ];
+      }
+    }
 
     if (search) {
       query.$or = [
@@ -35,7 +48,7 @@ export async function getUsers(req, res, next) {
       User.find(query)
         .populate("departmentId", "code name")
         .populate("classId", "className year semester section")
-        .sort({ createdAt: -1 })
+        .sort({ registerNumber: 1, createdAt: -1 })
         .skip(skip)
         .limit(limit),
       User.countDocuments(query),
@@ -46,10 +59,15 @@ export async function getUsers(req, res, next) {
       users: users.map((u) => ({
         ...u.toSafeObject(),
         streak: u.streak?.currentStreak || 0,
-        department: u.departmentId?.code || u.departmentId?.name || "CSE",
+        department: u.departmentId?.code || u.departmentCode || u.courseCode || "CSE",
+        departmentName: u.departmentId?.name || u.departmentName || u.courseName || "",
         className: u.classId?.className || "",
-        year: u.classId?.year ? `${u.classId.year === 1 ? 'I' : u.classId.year === 2 ? 'II' : u.classId.year === 3 ? 'III' : 'IV'} Year` : "III Year",
-        section: u.classId?.section || "A",
+        year: u.classId?.year
+          ? `${u.classId.year === 1 ? 'I' : u.classId.year === 2 ? 'II' : u.classId.year === 3 ? 'III' : 'IV'} Year`
+          : u.year
+          ? `${u.year === 1 ? 'I' : u.year === 2 ? 'II' : u.year === 3 ? 'III' : 'IV'} Year`
+          : "II Year",
+        section: u.classId?.section || u.section || "A",
       })),
       pagination: {
         page,
@@ -57,6 +75,184 @@ export async function getUsers(req, res, next) {
         total,
         totalPages: Math.ceil(total / limit),
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   GET /api/users/department-stats
+ * @desc    Get department-level stats: student count, faculty count, resource count, course count, faculty list, recent resources
+ * @access  Protected (HOD / Faculty / Admin)
+ */
+export async function getDepartmentStats(req, res, next) {
+  try {
+    let departmentId = req.query?.departmentId || req.user?.departmentId;
+
+    if (!departmentId && req.user?._id) {
+      const currentUser = await User.findById(req.user._id).select("departmentId departmentCode");
+      departmentId = currentUser?.departmentId;
+    }
+
+    if (!departmentId) {
+      return res.status(400).json({ success: false, message: "departmentId is required" });
+    }
+
+    let deptDoc = null;
+    if (mongoose.Types.ObjectId.isValid(departmentId)) {
+      deptDoc = await Department.findById(departmentId).select("name code");
+    }
+
+    const deptFilter = mongoose.Types.ObjectId.isValid(departmentId)
+      ? { departmentId: new mongoose.Types.ObjectId(departmentId) }
+      : { $or: [{ departmentCode: departmentId }, { courseCode: departmentId }] };
+
+    const facultyQuery = {
+      isActive: true,
+      role: { $in: ["faculty", "teacher", "hod"] },
+      ...deptFilter,
+    };
+
+    const facultyMembers = await User.find(facultyQuery)
+      .select("_id name staffId designation email role profileImage")
+      .sort({ name: 1 });
+    const facultyIds = facultyMembers.map((f) => f._id);
+
+    const courseQuery = {
+      isPublished: true,
+      $or: [
+        ...(mongoose.Types.ObjectId.isValid(departmentId)
+          ? [{ departmentId: new mongoose.Types.ObjectId(departmentId) }]
+          : []),
+        { createdBy: { $in: facultyIds } },
+        { assignedFacultyId: { $in: facultyIds } },
+      ],
+    };
+
+    const resourceQuery = {
+      isPublished: true,
+      $or: [
+        ...(mongoose.Types.ObjectId.isValid(departmentId)
+          ? [{ departmentId: new mongoose.Types.ObjectId(departmentId) }]
+          : []),
+        { uploadedBy: { $in: facultyIds } },
+      ],
+    };
+
+    const [
+      studentCount,
+      resourceCount,
+      courseCount,
+      recentResources,
+      coursesList,
+    ] = await Promise.all([
+      User.countDocuments({ isActive: true, role: "student", ...deptFilter }),
+      Resource.countDocuments(resourceQuery),
+      Course.countDocuments(courseQuery),
+      Resource.find(resourceQuery)
+        .populate("uploadedBy", "name email staffId")
+        .sort({ createdAt: -1 })
+        .limit(6),
+      Course.find(courseQuery)
+        .populate("assignedFacultyId", "name email staffId")
+        .sort({ createdAt: -1 })
+        .limit(10),
+    ]);
+
+    res.json({
+      success: true,
+      studentCount,
+      facultyCount: facultyMembers.length,
+      resourceCount,
+      courseCount,
+      department: {
+        _id: departmentId,
+        name: deptDoc?.name || "",
+        code: deptDoc?.code || "",
+      },
+      stats: {
+        totalStudents: studentCount,
+        totalFaculty: facultyMembers.length,
+        totalResources: resourceCount,
+        totalCourses: courseCount,
+      },
+      facultyList: facultyMembers,
+      recentResources,
+      courses: coursesList,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   GET /api/users/faculty-stats
+ * @desc    Get stats specific to a single faculty member: resource count, assigned course count, department student count
+ * @access  Protected (Faculty / Teacher / HOD)
+ */
+export async function getFacultyStats(req, res, next) {
+  try {
+    const facultyId = req.query?.facultyId || req.user?._id;
+    let departmentId = req.query?.departmentId || req.user?.departmentId;
+
+    if (!facultyId) {
+      return res.status(400).json({ success: false, message: "facultyId is required" });
+    }
+
+    if (!departmentId && req.user?._id) {
+      const currentUser = await User.findById(req.user._id).select("departmentId departmentCode");
+      departmentId = currentUser?.departmentId;
+    }
+
+    const fObjId = mongoose.Types.ObjectId.isValid(facultyId)
+      ? new mongoose.Types.ObjectId(facultyId)
+      : null;
+
+    const deptFilter = departmentId && mongoose.Types.ObjectId.isValid(departmentId)
+      ? { departmentId: new mongoose.Types.ObjectId(departmentId) }
+      : {};
+
+    const [
+      resourceCount,
+      courseCount,
+      studentCount,
+      myRecentResources,
+      myCourses,
+    ] = await Promise.all([
+      fObjId ? Resource.countDocuments({ isPublished: true, uploadedBy: fObjId }) : 0,
+      fObjId
+        ? Course.countDocuments({
+            isPublished: true,
+            $or: [{ assignedFacultyId: fObjId }, { createdBy: fObjId }],
+          })
+        : 0,
+      Object.keys(deptFilter).length > 0
+        ? User.countDocuments({ isActive: true, role: "student", ...deptFilter })
+        : 0,
+      fObjId
+        ? Resource.find({ isPublished: true, uploadedBy: fObjId }).sort({ createdAt: -1 }).limit(6)
+        : [],
+      fObjId
+        ? Course.find({
+            isPublished: true,
+            $or: [{ assignedFacultyId: fObjId }, { createdBy: fObjId }],
+          }).sort({ createdAt: -1 })
+        : [],
+    ]);
+
+    res.json({
+      success: true,
+      resourceCount,
+      courseCount,
+      studentCount,
+      stats: {
+        totalDepartmentStudents: studentCount,
+        myTotalResources: resourceCount,
+        myTotalCourses: courseCount,
+      },
+      myRecentResources,
+      myCourses,
     });
   } catch (error) {
     next(error);
@@ -145,3 +341,5 @@ export async function getStreakInfo(req, res, next) {
     next(error);
   }
 }
+
+

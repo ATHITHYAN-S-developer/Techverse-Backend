@@ -1,10 +1,4 @@
 import mongoose from "mongoose";
-import { Student } from "./Student.js";
-import { Faculty } from "./Faculty.js";
-import { Hod } from "./Hod.js";
-import { Admin } from "./Admin.js";
-
-export { Student, Faculty, Hod, Admin };
 
 const pointsSchema = new mongoose.Schema(
   {
@@ -86,6 +80,19 @@ const userSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Department",
       index: true,
+    },
+    departmentCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+    departmentName: {
+      type: String,
+      trim: true,
+    },
+    department: {
+      type: String,
+      trim: true,
     },
     classId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -222,48 +229,6 @@ userSchema.methods.toSafeObject = function () {
   return obj;
 };
 
-// Sync hook to keep role-specific collections (students, faculties, hods, admins) updated
-userSchema.post("save", async function (doc) {
-  try {
-    const db = mongoose.connection.db;
-    if (!db) return;
-    const r = doc.role;
-    let targetCollName = "students";
-    if (r === "faculty" || r === "teacher") targetCollName = "faculties";
-    else if (r === "hod") targetCollName = "hods";
-    else if (r === "admin") targetCollName = "admins";
-
-    const rawDoc = doc.toObject ? doc.toObject() : { ...doc };
-    await db.collection(targetCollName).replaceOne(
-      { _id: doc._id },
-      rawDoc,
-      { upsert: true }
-    );
-  } catch (err) {
-    // Non-blocking sync error
-    console.error("[User Model Sync Error]:", err.message);
-  }
-});
-
-userSchema.post(["findOneAndDelete", "findByIdAndDelete"], async function (doc) {
-  if (!doc) return;
-  try {
-    const db = mongoose.connection.db;
-    if (!db) return;
-    for (const c of ["students", "faculties", "hods", "admins"]) {
-      await db.collection(c).deleteOne({ _id: doc._id });
-    }
-  } catch (err) {
-    console.error("[User Model Delete Sync Error]:", err.message);
-  }
-});
-
 export const User = mongoose.models.User || mongoose.model("User", userSchema, "users");
-
-// Attach role models for backwards compatibility
-User.Student = Student;
-User.Faculty = Faculty;
-User.Hod = Hod;
-User.Admin = Admin;
 
 export default User;

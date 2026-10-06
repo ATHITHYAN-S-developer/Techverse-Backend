@@ -97,6 +97,16 @@ const courseSchema = new mongoose.Schema(
       ref: "Department",
       index: true,
     },
+    targetAudience: {
+      type: String,
+      enum: ["department", "all"],
+      default: "all",
+      index: true,
+    },
+    isDepartmentOnly: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

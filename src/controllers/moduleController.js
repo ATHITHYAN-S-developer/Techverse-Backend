@@ -30,8 +30,8 @@ export async function getModules(req, res, next) {
       .populate("courseId", "title slug category instructor")
       .sort({ moduleNumber: 1, order: 1, createdAt: 1 });
 
-    // If user is not admin/teacher, protect MCQ correct answers
-    const isPrivileged = req.user && (req.user.role === "admin" || req.user.role === "teacher");
+    // If user is not admin/teacher/faculty/hod, protect MCQ correct answers
+    const isPrivileged = req.user && ["admin", "teacher", "faculty", "hod"].includes(req.user.role);
     const sanitizedModules = modules.map((mod) => {
       const obj = mod.toObject();
       if (!isPrivileged && obj.mcqs) {
@@ -61,7 +61,7 @@ export async function getModuleById(req, res, next) {
       return res.status(404).json({ success: false, message: "Module not found." });
     }
 
-    const isPrivileged = req.user && (req.user.role === "admin" || req.user.role === "teacher");
+    const isPrivileged = req.user && ["admin", "teacher", "faculty", "hod"].includes(req.user.role);
     const obj = module.toObject();
     if (!isPrivileged && obj.mcqs) {
       obj.mcqs = obj.mcqs.map((q) => {

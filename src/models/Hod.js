@@ -37,7 +37,7 @@ const hodSchema = new mongoose.Schema(
     designation: {
       type: String,
       trim: true,
-      default: "Associate Professor & HOD i/c",
+      default: "Head of the Department (HOD)",
     },
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,

@@ -12,6 +12,7 @@
     "seed": "node src/seed/seedDatabase.js",
     "seed:placement": "node src/scripts/seedPlacementEvents.js",
     "import:students": "node src/scripts/importStudents.js",
+    "import:excel": "node src/scripts/importExcelData.js",
     "seed:enrollments": "node src/scripts/seedEnrollments.js",
     "backfill": "node src/scripts/backfillGamification.js",
     "backfill:certificates": "node src/scripts/backfillCourseCertificates.js",
@@ -25,7 +26,8 @@
     "express-rate-limit": "^8.7.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.5",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

@@ -105,7 +105,7 @@ export async function login(req, res, next) {
       ];
     }
 
-    const user = await User.findOne(query).select("+password");
+    const user = await User.findOne(query).populate("departmentId", "code name").select("+password");
 
     if (!user) {
       return res.status(401).json({
@@ -239,31 +239,6 @@ export async function updateProfile(req, res, next) {
     }
 
     await user.save();
-
-    // Explicitly sync fields to role collection (hods, faculties, students, admins)
-    const db = mongoose.connection.db;
-    if (db) {
-      const r = user.role;
-      let targetCollName = "students";
-      if (r === "faculty" || r === "teacher") targetCollName = "faculties";
-      else if (r === "hod") targetCollName = "hods";
-      else if (r === "admin") targetCollName = "admins";
-
-      await db.collection(targetCollName).updateOne(
-        { _id: user._id },
-        {
-          $set: {
-            name: user.name,
-            email: user.email,
-            phone: user.phone,
-            contactPhone: user.contactPhone,
-            bio: user.bio,
-            ...(user.profileImage ? { profileImage: user.profileImage } : {}),
-            updatedAt: new Date(),
-          },
-        }
-      );
-    }
 
     res.json({
       success: true,

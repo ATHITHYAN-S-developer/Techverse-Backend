@@ -93,6 +93,34 @@ export const DEPARTMENT_CATALOG = [
     color: "#dc2626",
     description: "Department of Mechanical Engineering, VCET",
   },
+  {
+    code: "MBA",
+    name: "Master of Business Administration",
+    icon: "Briefcase",
+    color: "#2563eb",
+    description: "Department of Management Studies (MBA), VCET",
+  },
+  {
+    code: "MEAE",
+    name: "M.E. Applied Electronics",
+    icon: "Cpu",
+    color: "#0891b2",
+    description: "M.E. Applied Electronics, VCET",
+  },
+  {
+    code: "MEBME",
+    name: "M.E. Bio Medical Engineering",
+    icon: "HeartPulse",
+    color: "#059669",
+    description: "M.E. Bio Medical Engineering, VCET",
+  },
+  {
+    code: "MECSE",
+    name: "M.E. Computer Science and Engineering",
+    icon: "Server",
+    color: "#7c3aed",
+    description: "M.E. Computer Science and Engineering, VCET",
+  },
 ];
 
 const CATALOG_BY_CODE = new Map(DEPARTMENT_CATALOG.map((dept) => [dept.code, dept]));
@@ -110,6 +138,10 @@ const BRANCH_PREFIX_TO_DEPARTMENT = {
   MD: "MDE",
   IT: "IT",
   ME: "MECH",
+  AE: "MEAE",
+  BP: "MEBME",
+  CP: "MECSE",
+  MB: "MBA",
 };
 
 /**
@@ -138,6 +170,11 @@ export function getDepartmentColor(code) {
 export function normalizeCourseCode(input) {
   if (!input) return "";
   let code = String(input).trim();
+
+  if (/^MBA$/i.test(code) || /Business Administration/i.test(code)) return "MBA";
+  if (/M\.?E\.?\s*AE/i.test(code) || /Applied Electronics/i.test(code)) return "MEAE";
+  if (/M\.?E\.?\s*BME/i.test(code) || (/Bio\s*Medical/i.test(code) && /M\.?E/i.test(code))) return "MEBME";
+  if (/M\.?E\.?\s*CSE/i.test(code) || (/Computer\s*Science/i.test(code) && /M\.?E/i.test(code))) return "MECSE";
 
   const alias = code.match(/\(([A-Z&]+)\)\s*$/i);
   if (alias) {

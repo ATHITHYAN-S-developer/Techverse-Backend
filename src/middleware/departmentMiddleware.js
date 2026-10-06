@@ -207,6 +207,8 @@ export async function checkModuleCourseOwnership(req, res, next) {
       req.user.role === "admin" ||
       req.user.role === "hod" ||
       (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
+      (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId) ||
+      (course.assignedFacultyName && req.user.name && course.assignedFacultyName.toLowerCase().trim() === req.user.name.toLowerCase().trim()) ||
       (course.createdBy && course.createdBy.toString() === req.user._id.toString());
 
     if (!isOwner) {

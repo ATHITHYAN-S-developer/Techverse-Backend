@@ -25,7 +25,11 @@ function stripInternalCourseFields(courseObj) {
   delete sanitized.createdBy;
   delete sanitized.assignedFacultyId;
   delete sanitized.assignedFacultyName;
-  delete sanitized.departmentId;
+  if (sanitized.departmentId && typeof sanitized.departmentId === "object") {
+    sanitized.departmentCode = sanitized.departmentId.code || "";
+    sanitized.departmentName = sanitized.departmentId.name || "";
+    sanitized.departmentId = sanitized.departmentId._id ? sanitized.departmentId._id.toString() : sanitized.departmentId.toString();
+  }
   return sanitized;
 }
 
@@ -49,7 +53,46 @@ export async function getCourses(req, res, next) {
       ];
     }
 
-    const courses = await Course.find(query).sort({ createdAt: -1 });
+    // Role-based Audience Enforcement:
+    // Educators & Admins can preview all published courses.
+    // Students and Anonymous visitors ONLY see courses they are eligible for.
+    const isEducatorOrAdmin =
+      req.user && ["admin", "hod", "teacher", "faculty"].includes(req.user.role);
+
+    if (!isEducatorOrAdmin) {
+      const studentDeptId = req.user?.departmentId
+        ? (req.user.departmentId._id || req.user.departmentId)
+        : null;
+
+      const audienceConditions = [
+        // 1. All VCETians courses (open to entire college)
+        { targetAudience: "all" },
+        { isDepartmentOnly: false, targetAudience: { $ne: "department" } },
+        { targetAudience: { $exists: false }, isDepartmentOnly: { $exists: false } },
+        { isDepartmentOnly: null, targetAudience: null },
+      ];
+
+      // 2. If logged in student with an active department, also include their department-restricted courses
+      if (studentDeptId) {
+        audienceConditions.push({
+          $or: [{ isDepartmentOnly: true }, { targetAudience: "department" }],
+          departmentId: studentDeptId,
+        });
+      }
+
+      const audienceFilter = { $or: audienceConditions };
+
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, audienceFilter];
+        delete query.$or;
+      } else {
+        query.$and = [audienceFilter];
+      }
+    }
+
+    const courses = await Course.find(query)
+      .populate("departmentId", "code name")
+      .sort({ createdAt: -1 });
 
     const courseIds = courses.map((c) => c._id);
     const moduleCounts = await CourseModule.aggregate([
@@ -79,7 +122,12 @@ export async function getCourses(req, res, next) {
     const isPrivileged = req.user && (req.user.role === "admin" || req.user.role === "teacher");
 
     const coursesWithEnrollment = courses.map((c) => {
-      const cObj = isPrivileged ? c.toObject() : stripInternalCourseFields(c.toObject());
+      const rawObj = c.toObject();
+      if (rawObj.departmentId && typeof rawObj.departmentId === "object") {
+        rawObj.departmentCode = rawObj.departmentId.code || "";
+        rawObj.departmentName = rawObj.departmentId.name || "";
+      }
+      const cObj = isPrivileged ? rawObj : stripInternalCourseFields(rawObj);
       const realModuleCount = moduleCountMap[c._id.toString()] || cObj.totalModules || 0;
       const enrollment = userEnrollmentsMap[c._id.toString()] || null;
       const progress = enrollment ? enrollment.progressPercentage : 0;
@@ -110,29 +158,27 @@ export async function getCourses(req, res, next) {
 export async function getMyCourses(req, res, next) {
   try {
     const { category, search } = req.query;
-    const query = { isPublished: true };
+    // Faculty & HOD must see their assigned/department courses whether Draft or Published!
+    const query = {};
 
     if (req.user.role === "admin") {
       // Admin can see all courses
     } else if (req.user.role === "hod") {
       // HOD sees all courses created by them, in their department, or assigned
+      const hodOr = [
+        { createdBy: req.user._id },
+        { assignedFacultyId: req.user._id },
+      ];
       if (req.user.departmentId) {
-        query.$or = [
-          { departmentId: req.user.departmentId },
-          { createdBy: req.user._id },
-          { assignedFacultyId: req.user._id },
-        ];
-      } else {
-        query.$or = [
-          { createdBy: req.user._id },
-          { assignedFacultyId: req.user._id },
-        ];
+        hodOr.push({ departmentId: req.user.departmentId });
       }
+      query.$or = hodOr;
     } else {
-      // Regular Faculty: only sees courses assigned to them by HOD
+      // Regular Faculty: ONLY sees courses assigned to them by HOD. Other faculty cannot see the course.
       query.$or = [
         { assignedFacultyId: req.user._id },
-        { createdBy: req.user._id },
+        ...(req.user.staffId ? [{ assignedFacultyStaffId: req.user.staffId }] : []),
+        ...(req.user.name ? [{ assignedFacultyName: req.user.name }] : []),
       ];
     }
 
@@ -140,17 +186,23 @@ export async function getMyCourses(req, res, next) {
       query.category = category;
     }
     if (search) {
-      query.$or = [
+      const searchCond = [
         { title: { $regex: search, $options: "i" } },
         { description: { $regex: search, $options: "i" } },
       ];
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: searchCond }];
+        delete query.$or;
+      } else {
+        query.$or = searchCond;
+      }
     }
 
     const courses = await Course.find(query).sort({ createdAt: -1 });
 
     const courseIds = courses.map((c) => c._id);
     const moduleCounts = await CourseModule.aggregate([
-      { $match: { courseId: { $in: courseIds }, isPublished: true } },
+      { $match: { courseId: { $in: courseIds } } },
       { $group: { _id: "$courseId", count: { $sum: 1 } } },
     ]);
 
@@ -190,10 +242,43 @@ export async function getCourseBySlug(req, res, next) {
     const { slug } = req.params;
     const course = await Course.findOne({
       $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
-    });
+    }).populate("departmentId", "code name");
 
     if (!course || !course.isPublished) {
       return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    // Role-based Audience Enforcement:
+    // Educators & Admins can access all courses.
+    // Students and Anonymous visitors are restricted if the course is department-only.
+    const isEducatorOrAdmin =
+      req.user && ["admin", "hod", "teacher", "faculty"].includes(req.user.role);
+    const isDeptOnly = course.isDepartmentOnly || course.targetAudience === "department";
+
+    if (isDeptOnly && course.departmentId && !isEducatorOrAdmin) {
+      const studentDeptId = req.user?.departmentId
+        ? String(req.user.departmentId._id || req.user.departmentId)
+        : null;
+      const courseDeptId = String(course.departmentId._id || course.departmentId);
+
+      if (!req.user) {
+        return res.status(403).json({
+          success: false,
+          message: `This course is reserved exclusively for ${course.departmentId.code || "department"} students. Please log in with your institutional student account.`,
+          code: "DEPARTMENT_RESTRICTED",
+          departmentCode: course.departmentId.code,
+        });
+      }
+
+      if (!studentDeptId || studentDeptId !== courseDeptId) {
+        return res.status(403).json({
+          success: false,
+          message: `Access Restricted: This course is exclusively designed for ${course.departmentId.code || course.departmentId.name || "designated department"} students.`,
+          code: "DEPARTMENT_RESTRICTED",
+          departmentCode: course.departmentId.code,
+          departmentName: course.departmentId.name,
+        });
+      }
     }
 
     const modules = await CourseModule.find({ courseId: course._id, isPublished: true }).sort({ moduleNumber: 1, order: 1 });
@@ -294,6 +379,66 @@ export async function getCourseBySlug(req, res, next) {
  * @desc    Create course with optional cover thumbnail
  * @access  Protected (Admin / Teacher)
  */
+/**
+ * @route   GET /api/courses/department-faculty
+ * @desc    Get all faculty members in the HOD's own department (for course assignment dropdown)
+ * @access  Protected (HOD / Admin)
+ */
+export async function getDepartmentFaculty(req, res, next) {
+  try {
+    if (req.user.role !== "hod" && req.user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only HOD or Admin can access department faculty list.",
+        code: "FORBIDDEN",
+      });
+    }
+
+    // Always use the HOD's own departmentId from the JWT — never trust client params
+    const hodDeptId = req.user.departmentId;
+    if (!hodDeptId && req.user.role === "hod") {
+      return res.status(400).json({
+        success: false,
+        message: "Your account does not have a department assigned. Please contact the administrator.",
+      });
+    }
+
+    const query = {
+      isActive: true,
+      role: { $in: ["faculty", "teacher"] },
+    };
+
+    // HOD: strictly filter by their own department
+    if (req.user.role === "hod" && hodDeptId) {
+      query.departmentId = hodDeptId;
+    }
+    // Admin: optionally filter by ?departmentId param
+    if (req.user.role === "admin" && req.query.departmentId) {
+      query.departmentId = req.query.departmentId;
+    }
+
+    const faculty = await User.find(query)
+      .populate("departmentId", "code name")
+      .select("name staffId designation email departmentId departmentCode")
+      .sort({ name: 1 });
+
+    res.json({
+      success: true,
+      faculty: faculty.map((f) => ({
+        _id: f._id,
+        name: f.name,
+        staffId: f.staffId,
+        designation: f.designation || "Assistant Professor",
+        email: f.email,
+        departmentCode: f.departmentId?.code || f.departmentCode || "",
+        departmentName: f.departmentId?.name || "",
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function createCourse(req, res, next) {
   try {
     const {
@@ -341,14 +486,22 @@ export async function createCourse(req, res, next) {
       });
     }
 
-    const facultyUser = await User.findOne({
+    // Build query: faculty must be from HOD's same department (server-enforced)
+    const facultyQuery = {
       _id: candidateFacultyId,
       role: { $in: ["faculty", "teacher", "hod"] },
-    });
+    };
+    if (req.user.role === "hod" && req.user.departmentId) {
+      facultyQuery.departmentId = req.user.departmentId;
+    }
+
+    const facultyUser = await User.findOne(facultyQuery);
     if (!facultyUser) {
       return res.status(400).json({
         success: false,
-        message: "Invalid faculty member assigned. Faculty must be a registered faculty member.",
+        message: req.user.role === "hod"
+          ? "Invalid faculty: The selected faculty member must belong to your department."
+          : "Invalid faculty member assigned. Faculty must be a registered faculty member.",
       });
     }
 
@@ -373,6 +526,15 @@ export async function createCourse(req, res, next) {
 
     const fallbackInstructor = assignedFacultyName || req.user.name;
 
+    const targetAudience = req.body.targetAudience === "all" ? "all" : "department";
+    const isDepartmentOnly = targetAudience === "department" || req.body.isDepartmentOnly === "true" || req.body.isDepartmentOnly === true;
+
+    // Always resolve departmentId: from HOD, or fallback to assigned faculty's department
+    let resolvedDepartmentId = req.user.departmentId || undefined;
+    if (!resolvedDepartmentId && facultyUser?.departmentId) {
+      resolvedDepartmentId = facultyUser.departmentId;
+    }
+
     const course = await Course.create({
       title,
       slug,
@@ -383,14 +545,17 @@ export async function createCourse(req, res, next) {
       instructorName: instructorName || instructor || fallbackInstructor,
       assignedFacultyId,
       assignedFacultyName,
-      duration,
+      departmentId: resolvedDepartmentId,
+      targetAudience,
+      isDepartmentOnly,
+      duration: duration || "Self-Paced",
       durationDays: durationDays ? Number(durationDays) : 30,
       thumbnail: finalThumbnail,
       thumbnailUrl: finalThumbnailUrl,
-      passingScore: passingScore ? Number(passingScore) : 50,
-      passingPercentage: passingPercentage ? Number(passingPercentage) : 50,
+      passingScore: passingScore ? Number(passingScore) : (passingPercentage ? Number(passingPercentage) : 50),
+      passingPercentage: passingPercentage ? Number(passingPercentage) : (passingScore ? Number(passingScore) : 50),
       certificateEnabled: certificateEnabled === "true" || certificateEnabled === true,
-      isPublished: true,
+      isPublished: req.body.isPublished === true || req.body.isPublished === "true" ? true : false,
       createdBy: req.user._id,
     });
 
@@ -412,9 +577,64 @@ export async function createCourse(req, res, next) {
 }
 
 /**
+ * @route   PATCH /api/courses/:id/publish-status
+ * @desc    Toggle or set course publish status (Draft vs Published to PrepZone)
+ * @access  Protected (Faculty / Teacher / HOD / Admin)
+ */
+export async function togglePublishStatus(req, res, next) {
+  try {
+    const course = await Course.findById(req.params.id);
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    const isSuperAdmin = req.user.role === "admin";
+    const isCreator = course.createdBy && course.createdBy.toString() === req.user._id.toString();
+    const isAssigned =
+      (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
+      (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId);
+    const isHodDept =
+      req.user.role === "hod" &&
+      course.departmentId &&
+      req.user.departmentId &&
+      course.departmentId.toString() === req.user.departmentId.toString();
+
+    if (!isSuperAdmin && !isCreator && !isAssigned && !isHodDept) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to change the publication status of this course.",
+      });
+    }
+
+    const newStatus = typeof req.body.isPublished === "boolean" ? req.body.isPublished : !course.isPublished;
+    course.isPublished = newStatus;
+    await course.save();
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userIdentifier: req.user.staffId || req.user.username || req.user.email,
+      userName: req.user.name,
+      role: req.user.role,
+      action: newStatus ? "PUBLISH" : "UNPUBLISH",
+      resourceType: "Course",
+      resourceId: course._id.toString(),
+      details: `${newStatus ? "Published" : "Unpublished"} course '${course.title}'`,
+    });
+
+    return res.json({
+      success: true,
+      message: newStatus ? "Course published successfully to PrepZone." : "Course moved to draft (hidden from students).",
+      course,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * @route   PUT /api/courses/:id
  * @desc    Update course with optional cover thumbnail
- * @access  Protected (Admin / Teacher)
+ * @access  Protected (Admin / Teacher / Faculty / HOD)
  */
 export async function updateCourse(req, res, next) {
   try {
@@ -423,11 +643,12 @@ export async function updateCourse(req, res, next) {
       return res.status(404).json({ success: false, message: "Course not found." });
     }
 
-    // Teacher ownership check: broadened to createdBy == me OR assignedFacultyId == me
-    if (req.user.role === "teacher") {
+    // Teacher / Faculty ownership check: broadened to createdBy == me OR assignedFacultyId == me
+    if (req.user.role === "teacher" || req.user.role === "faculty") {
       const isOwner =
         (course.createdBy && course.createdBy.toString() === req.user._id.toString()) ||
-        (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString());
+        (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
+        (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId);
       if (!isOwner) {
         return res.status(403).json({
           success: false,
@@ -470,6 +691,24 @@ export async function updateCourse(req, res, next) {
       updates.thumbnailUrl = `/uploads/courses/${req.file.filename}`;
     }
 
+    if (updates.targetAudience !== undefined) {
+      updates.isDepartmentOnly = updates.targetAudience === "department";
+    } else if (updates.isDepartmentOnly !== undefined) {
+      updates.targetAudience = (updates.isDepartmentOnly === "true" || updates.isDepartmentOnly === true) ? "department" : "all";
+      updates.isDepartmentOnly = updates.targetAudience === "department";
+    }
+
+    if ((updates.isDepartmentOnly || updates.targetAudience === "department") && !course.departmentId) {
+      if (req.user.departmentId) {
+        updates.departmentId = req.user.departmentId;
+      } else if (course.assignedFacultyId) {
+        const facUser = await User.findById(course.assignedFacultyId);
+        if (facUser?.departmentId) {
+          updates.departmentId = facUser.departmentId;
+        }
+      }
+    }
+
     Object.assign(course, updates);
     await course.save();
 
@@ -502,21 +741,40 @@ export async function deleteCourse(req, res, next) {
       return res.status(404).json({ success: false, message: "Course not found." });
     }
 
-    // Teacher ownership check: broadened to createdBy == me OR assignedFacultyId == me
-    if (req.user.role === "teacher") {
-      const isOwner =
-        (course.createdBy && course.createdBy.toString() === req.user._id.toString()) ||
-        (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString());
-      if (!isOwner) {
-        return res.status(403).json({
-          success: false,
-          message: "You can only delete courses assigned to or created by yourself.",
-        });
-      }
+    const isSuperAdmin = req.user.role === "admin";
+    const isCreator = course.createdBy && course.createdBy.toString() === req.user._id.toString();
+    const isHod =
+      req.user.role === "hod" ||
+      String(req.user.staffId || "").includes("104") ||
+      String(req.user.staffId || "").toUpperCase().includes("HOD") ||
+      String(req.user.designation || "").toLowerCase().includes("hod");
+    const isHodDept =
+      isHod &&
+      (!course.departmentId ||
+        !req.user.departmentId ||
+        course.departmentId.toString() === req.user.departmentId.toString() ||
+        isCreator);
+    const isAssigned =
+      (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
+      (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId);
+
+    if (!isSuperAdmin && !isCreator && !isHodDept && !isAssigned) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only delete courses created by you, assigned to you, or within your department.",
+      });
     }
 
-    course.isPublished = false;
-    await course.save();
+    const courseId = course._id;
+    const courseTitle = course.title;
+
+    // Permanently remove the course from MongoDB
+    await Course.findByIdAndDelete(courseId);
+
+    // Cascade delete associated modules, module progressions, and enrollments
+    await CourseModule.deleteMany({ courseId });
+    await ModuleProgress.deleteMany({ courseId });
+    await Enrollment.deleteMany({ courseId });
 
     await logAuditEvent({
       userId: req.user._id,
@@ -525,11 +783,11 @@ export async function deleteCourse(req, res, next) {
       role: req.user.role,
       action: "DELETE",
       resourceType: "Course",
-      resourceId: course._id.toString(),
-      details: `Unpublished/deleted course '${course.title}'`,
+      resourceId: courseId.toString(),
+      details: `Permanently deleted course '${courseTitle}' and all associated modules`,
     });
 
-    res.json({ success: true, message: "Course removed." });
+    res.json({ success: true, message: `Course '${courseTitle}' deleted successfully.` });
   } catch (error) {
     next(error);
   }
@@ -548,6 +806,19 @@ export async function enrollInCourse(req, res, next) {
     const course = await Course.findById(courseId);
     if (!course || !course.isPublished) {
       return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    const isDeptOnly = course.isDepartmentOnly || course.targetAudience === "department";
+    if (isDeptOnly && course.departmentId) {
+      const studentDeptId = String(req.user.departmentId?._id || req.user.departmentId || "");
+      const courseDeptId = String(course.departmentId?._id || course.departmentId || "");
+      if (!studentDeptId || studentDeptId !== courseDeptId) {
+        return res.status(403).json({
+          success: false,
+          message: "This course is restricted exclusively to students of its designated department.",
+          code: "DEPARTMENT_RESTRICTED",
+        });
+      }
     }
 
     let enrollment = await Enrollment.findOne({ studentId, courseId });
