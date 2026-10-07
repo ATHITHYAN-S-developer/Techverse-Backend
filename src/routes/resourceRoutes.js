@@ -10,7 +10,7 @@ import {
 import { authenticate } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/roleMiddleware.js";
 import { enforceDepartmentMatch, checkDepartmentAccess } from "../middleware/departmentMiddleware.js";
-import { uploadResourceFile } from "../utils/fileUpload.js";
+import { uploadResourceFile, compressUploadedImages } from "../utils/fileUpload.js";
 
 const router = express.Router();
 
@@ -21,6 +21,7 @@ router.post(
   authenticate,
   authorize("faculty", "teacher", "hod", "admin"),
   uploadResourceFile.single("file"),
+  compressUploadedImages,
   enforceDepartmentMatch,
   createResource
 );
@@ -30,6 +31,7 @@ router.put(
   authorize("faculty", "teacher", "hod", "admin"),
   checkDepartmentAccess("resource"),
   uploadResourceFile.single("file"),
+  compressUploadedImages,
   updateResource
 );
 router.delete(

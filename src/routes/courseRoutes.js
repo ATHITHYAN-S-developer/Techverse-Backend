@@ -18,7 +18,7 @@ import {
 } from "../controllers/courseController.js";
 import { authenticate } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/roleMiddleware.js";
-import { uploadCourseThumbnail } from "../utils/fileUpload.js";
+import { uploadCourseThumbnail, compressUploadedImages } from "../utils/fileUpload.js";
 
 const router = express.Router();
 
@@ -44,8 +44,9 @@ router.get("/:slug", optionalAuth, getCourseBySlug);
 router.post(
   "/",
   authenticate,
-  authorize("hod", "admin"),
+  authorize("hod", "admin", "faculty", "teacher"),
   uploadCourseThumbnail.single("thumbnail"),
+  compressUploadedImages,
   createCourse
 );
 
@@ -73,6 +74,7 @@ router.put(
   authenticate,
   authorize("faculty", "teacher", "hod", "admin"),
   uploadCourseThumbnail.single("thumbnail"),
+  compressUploadedImages,
   updateCourse
 );
 

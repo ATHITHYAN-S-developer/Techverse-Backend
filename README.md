@@ -155,9 +155,16 @@ Health check endpoint: `http://localhost:5000/api/health`.
 
 | Role | Identifier / Field | Value | Password | Department |
 | :--- | :--- | :--- | :--- | :--- |
-| **System Admin** | `username` | `admin` | `admin123` | System-wide |
-| **Faculty / Teacher** | `staffId` | `VCET-FAC-CSE-104` | `faculty123` | Computer Science & Eng. |
-| **Student** | `registerNumber` | `732924CSE001` | `student123` | Computer Science & Eng. |
+| **System Admin** | `username` | `admin` | `VcetTech@123` | System-wide |
+| **Faculty / HOD** | `staffId` | e.g. `VCETCSE01` | `vcet@2026` | Per section |
+| **Student** | `registerNumber` | e.g. `732925CSL001` | Date of birth (e.g. `2008-07-09`) | Per department |
+
+The roster above comes from the workbook in `New folder/`:
+
+```bash
+npm run export:logins   # workbook -> src/data/logins/*.json
+npm run seed:logins     # JSON -> users collection (--dry-run to preview)
+```
 
 ---
 

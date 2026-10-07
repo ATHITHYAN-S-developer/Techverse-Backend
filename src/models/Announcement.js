@@ -77,6 +77,21 @@ const announcementSchema = new mongoose.Schema(
       type: String,
       default: "admin",
     },
+    authorDepartment: {
+      type: String,
+      default: "",
+      index: true,
+    },
+    likes: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: "User",
+      default: [],
+    },
+    likesCount: {
+      type: Number,
+      default: 0,
+      index: true,
+    },
     isActive: {
       type: Boolean,
       default: true,

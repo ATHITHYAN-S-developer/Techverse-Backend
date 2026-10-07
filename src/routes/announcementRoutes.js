@@ -5,8 +5,9 @@ import {
   createAnnouncement,
   updateAnnouncement,
   deleteAnnouncement,
+  toggleLikeAnnouncement,
 } from "../controllers/announcementController.js";
-import { authenticate } from "../middleware/authMiddleware.js";
+import { authenticate, optionalAuth } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/roleMiddleware.js";
 import { handleAnnouncementUpload } from "../utils/fileUpload.js";
 
@@ -14,11 +15,12 @@ const router = express.Router();
 
 router.get("/", getAnnouncements);
 router.get("/:id", getAnnouncementById);
+router.post("/:id/like", optionalAuth, toggleLikeAnnouncement);
 
 router.post(
   "/",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("teacher", "faculty", "hod", "admin"),
   handleAnnouncementUpload,
   createAnnouncement
 );
@@ -26,7 +28,7 @@ router.post(
 router.put(
   "/:id",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("teacher", "faculty", "hod", "admin"),
   handleAnnouncementUpload,
   updateAnnouncement
 );
@@ -34,7 +36,7 @@ router.put(
 router.delete(
   "/:id",
   authenticate,
-  authorize("teacher", "admin"),
+  authorize("teacher", "faculty", "hod", "admin"),
   deleteAnnouncement
 );
 

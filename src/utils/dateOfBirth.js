@@ -113,3 +113,19 @@ export function matchesDateOfBirth(storedValue, input) {
     stored.getUTCDate() === typed.day
   );
 }
+
+/**
+ * The password a student's account holds: their own date of birth, in the ISO
+ * form the login form sends. Students sign in with a date of birth, so the
+ * password field mirrors it rather than carrying a separate secret that would
+ * never be used.
+ *
+ * @param {Date|string|null|undefined} dateOfBirth `User.dateOfBirth`
+ * @returns {string|null} `yyyy-MM-dd`, or null when there is no usable date
+ */
+export function studentPassword(dateOfBirth) {
+  const date =
+    dateOfBirth instanceof Date ? dateOfBirth : parseDateOfBirth(dateOfBirth);
+  if (!date) return null;
+  return date.toISOString().slice(0, 10);
+}

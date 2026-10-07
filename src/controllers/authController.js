@@ -71,8 +71,31 @@ export async function login(req, res, next) {
 
     if (role === "student") {
       query.role = "student";
+      const upper = cleanIdentifier.toUpperCase();
+      const variants = new Set([upper]);
+
+      // VCET uses branch codes ending in R (Regular) e.g. CSR vs common department abbreviation CSE
+      const aliasPairs = [
+        ["CSE", "CSR"],
+        ["ECE", "ECR"],
+        ["EEE", "EER"],
+        ["MECH", "MER"],
+        ["AIDS", "ADR"],
+        ["AIML", "AMR"],
+        ["MDE", "MDR"],
+        ["BME", "BMR"],
+      ];
+
+      aliasPairs.forEach(([abbr, code]) => {
+        if (upper.includes(abbr)) {
+          variants.add(upper.replace(abbr, code));
+        } else if (upper.includes(code)) {
+          variants.add(upper.replace(code, abbr));
+        }
+      });
+
       query.$or = [
-        { registerNumber: cleanIdentifier.toUpperCase() },
+        ...Array.from(variants).map((reg) => ({ registerNumber: reg })),
         { email: cleanIdentifier.toLowerCase() },
       ];
     } else if (role === "faculty" || role === "teacher") {
@@ -268,6 +291,18 @@ export async function changePassword(req, res, next) {
     }
 
     const user = await User.findById(req.user._id).select("+password");
+
+    if (user.role === "student") {
+      // A student's password is their date of birth, which comes from the
+      // roster and is what they sign in with - there is no separate secret to
+      // rotate.
+      return res.status(400).json({
+        success: false,
+        message:
+          "Your date of birth is your password, so it cannot be changed. Please contact the administrator if it is wrong.",
+        code: "STUDENT_PASSWORD_FIXED",
+      });
+    }
 
     if (!user.comparePassword(currentPassword)) {
       return res.status(401).json({

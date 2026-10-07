@@ -423,6 +423,10 @@ export async function createCodingTest(req, res, next) {
       problems = [],
       settings = {},
       isPublished = true,
+      targetAudience = "all",
+      department = "ALL",
+      departmentId = null,
+      departmentName = "",
     } = req.body;
 
     if (!title) {
@@ -432,6 +436,14 @@ export async function createCodingTest(req, res, next) {
       });
     }
 
+    const isDeptScope = targetAudience === "department";
+    const resolvedDeptCode = isDeptScope
+      ? (department || req.user?.departmentCode || req.user?.department || "ALL").toUpperCase()
+      : "ALL";
+    const resolvedDeptName = isDeptScope
+      ? (departmentName || req.user?.departmentName || resolvedDeptCode)
+      : "All VCETians";
+
     const generatedSlug = slug || title.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now();
 
     const newTest = await CodingTest.create({
@@ -439,6 +451,10 @@ export async function createCodingTest(req, res, next) {
       slug: generatedSlug,
       description,
       category,
+      targetAudience: isDeptScope ? "department" : "all",
+      department: resolvedDeptCode,
+      departmentId: isDeptScope ? (departmentId || req.user?.departmentId || null) : null,
+      departmentName: resolvedDeptName,
       difficulty,
       timeLimit,
       memoryLimit,
@@ -482,7 +498,15 @@ export async function createCodingTest(req, res, next) {
 export async function updateCodingTest(req, res, next) {
   try {
     const { id } = req.params;
-    const updates = req.body;
+    const updates = { ...req.body };
+
+    if (updates.targetAudience === "all") {
+      updates.department = "ALL";
+      updates.departmentName = "All VCETians";
+      updates.departmentId = null;
+    } else if (updates.targetAudience === "department" && updates.department) {
+      updates.department = updates.department.toUpperCase();
+    }
 
     const test = await CodingTest.findByIdAndUpdate(id, updates, {
       new: true,

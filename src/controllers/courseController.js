@@ -14,6 +14,7 @@ import {
   submitModuleTest as gradeAndSubmitModuleTest,
   getOrCreateModuleProgress,
 } from "../services/moduleProgressionService.js";
+import { deleteUploadedFile } from "../utils/fileUpload.js";
 
 
 /**
@@ -687,6 +688,8 @@ export async function updateCourse(req, res, next) {
     }
 
     if (req.file) {
+      if (course.thumbnail) deleteUploadedFile(course.thumbnail, "courses");
+      if (course.thumbnailUrl) deleteUploadedFile(course.thumbnailUrl, "courses");
       updates.thumbnail = req.file.filename;
       updates.thumbnailUrl = `/uploads/courses/${req.file.filename}`;
     }
@@ -732,11 +735,15 @@ export async function updateCourse(req, res, next) {
 /**
  * @route   DELETE /api/courses/:id
  * @desc    Delete course
- * @access  Protected (Admin / Teacher)
+ * @access  Protected (Admin / Teacher / Faculty / HOD)
  */
 export async function deleteCourse(req, res, next) {
   try {
-    const course = await Course.findById(req.params.id);
+    const isId = mongoose.Types.ObjectId.isValid(req.params.id);
+    const course = isId
+      ? await Course.findById(req.params.id)
+      : await Course.findOne({ slug: req.params.id });
+
     if (!course) {
       return res.status(404).json({ success: false, message: "Course not found." });
     }
@@ -757,8 +764,14 @@ export async function deleteCourse(req, res, next) {
     const isAssigned =
       (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
       (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId);
+    const isDeptFaculty =
+      (req.user.role === "faculty" || req.user.role === "teacher") &&
+      (!course.departmentId ||
+        !req.user.departmentId ||
+        course.departmentId.toString() === req.user.departmentId.toString() ||
+        isCreator);
 
-    if (!isSuperAdmin && !isCreator && !isHodDept && !isAssigned) {
+    if (!isSuperAdmin && !isCreator && !isHodDept && !isAssigned && !isDeptFaculty) {
       return res.status(403).json({
         success: false,
         message: "You can only delete courses created by you, assigned to you, or within your department.",
@@ -767,6 +780,10 @@ export async function deleteCourse(req, res, next) {
 
     const courseId = course._id;
     const courseTitle = course.title;
+
+    // Permanently remove course thumbnail from server disk
+    if (course.thumbnail) deleteUploadedFile(course.thumbnail, "courses");
+    if (course.thumbnailUrl) deleteUploadedFile(course.thumbnailUrl, "courses");
 
     // Permanently remove the course from MongoDB
     await Course.findByIdAndDelete(courseId);

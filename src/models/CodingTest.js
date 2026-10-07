@@ -72,6 +72,11 @@ const problemSchema = new mongoose.Schema(
       java: { type: String, default: "" },
       c: { type: String, default: "" },
     },
+    // Optional custom time limit for this problem in minutes (defaults to test.timeLimit)
+    timeLimit: {
+      type: Number,
+      default: null,
+    },
     // Public test cases are sent to the client for debugging/testing
     publicTestCases: [testCaseSchema],
     // Hidden test cases are kept strictly on the server to prevent cheating
@@ -101,6 +106,24 @@ const codingTestSchema = new mongoose.Schema(
     category: {
       type: String,
       default: "Placement",
+    },
+    targetAudience: {
+      type: String,
+      enum: ["all", "department"],
+      default: "all",
+    },
+    department: {
+      type: String,
+      default: "ALL",
+      trim: true,
+    },
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+    },
+    departmentName: {
+      type: String,
+      default: "All VCETians",
     },
     difficulty: {
       type: String,

@@ -123,7 +123,33 @@ export const DEPARTMENT_CATALOG = [
   },
 ];
 
-const CATALOG_BY_CODE = new Map(DEPARTMENT_CATALOG.map((dept) => [dept.code, dept]));
+/**
+ * Departments that exist only in the staff roster: the college runs a Cyber
+ * Security cell and a Science & Humanities division that teach students, but
+ * neither has its own student intake in the register-number grammar, so they
+ * are absent from `DEPARTMENT_CATALOG`.
+ */
+export const EXTRA_DEPARTMENTS = [
+  {
+    code: "CYS",
+    name: "CSE (Cyber Security)",
+    icon: "Network",
+    color: "#0f766e",
+    description: "Department of Cyber Security, VCET",
+  },
+  {
+    code: "SH",
+    name: "Science & Humanities",
+    icon: "Building2",
+    color: "#475569",
+    description: "Department of Science and Humanities, VCET",
+  },
+];
+
+/** Every department the college runs, catalogued plus roster-only. */
+export const ALL_DEPARTMENTS = [...DEPARTMENT_CATALOG, ...EXTRA_DEPARTMENTS];
+
+const CATALOG_BY_CODE = new Map(ALL_DEPARTMENTS.map((dept) => [dept.code, dept]));
 
 /** Two-letter branch prefixes seen in register numbers mapped to a department. */
 const BRANCH_PREFIX_TO_DEPARTMENT = {

@@ -159,7 +159,7 @@ async function seedDatabase() {
       {
         role: "admin",
         username: "admin",
-        password: "admin123", // Plain-text per project specifications
+        password: "VcetTech@123", // Plain-text per project specifications
         name: "VCET System Administrator",
         email: "admin@vcet.ac.in",
         isActive: true,
@@ -1646,7 +1646,7 @@ async function seedDatabase() {
     console.log("\n========================================================");
     console.log("✅ SEEDING COMPLETE FOR TECHVERSE DATABASE");
     console.log("========================================================");
-    console.log("👤 Admin:   username: admin           | password: admin123");
+    console.log("👤 Admin:   username: admin           | password: VcetTech@123");
     console.log("👨‍🏫 Teacher: staffId:  VCET-FAC-CSE-104 | password: faculty123");
     console.log("🎓 Student: regNumber: 732924CSR014   | dateOfBirth: 2006-07-20 (dd/MM/yyyy: 20/07/2006)");
     console.log("🎓 Student: regNumber: 732924CSE042   | dateOfBirth: 2007-05-11 (dd/MM/yyyy: 11/05/2007)");

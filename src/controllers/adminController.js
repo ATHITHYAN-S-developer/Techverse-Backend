@@ -2,6 +2,7 @@ import { User } from "../models/User.js";
 import { Department } from "../models/Department.js";
 import { getPagination } from "../utils/pagination.js";
 import { logAuditEvent } from "../services/auditService.js";
+import { parseDateOfBirth, studentPassword } from "../utils/dateOfBirth.js";
 
 /**
  * @route   GET /api/admin/users
@@ -83,22 +84,40 @@ export async function getUsers(req, res, next) {
  */
 export async function createUser(req, res, next) {
   try {
-    const { role, name, email, password, registerNumber, staffId, username, departmentId, classId, designation } = req.body;
+    const { role, name, email, password, registerNumber, staffId, username, departmentId, designation, dateOfBirth } = req.body;
 
-    if (!role || !name || !password) {
-      return res.status(400).json({ success: false, message: "Role, Name, and Password are required." });
+    if (!role || !name) {
+      return res.status(400).json({ success: false, message: "Role and Name are required." });
+    }
+
+    let accountPassword = password;
+    let studentDateOfBirth;
+
+    if (role === "student") {
+      // A student signs in with their date of birth, which is also their
+      // password - there is no separate secret to invent here.
+      studentDateOfBirth = parseDateOfBirth(dateOfBirth);
+      if (!studentDateOfBirth) {
+        return res.status(400).json({
+          success: false,
+          message: "A student's date of birth is required - it is also their password.",
+        });
+      }
+      accountPassword = studentPassword(studentDateOfBirth);
+    } else if (!accountPassword) {
+      return res.status(400).json({ success: false, message: "Password is required." });
     }
 
     const newUser = await User.create({
       role,
       name,
       email: email?.toLowerCase(),
-      password, // Plain text storage
+      password: accountPassword, // Plain text storage
+      dateOfBirth: studentDateOfBirth,
       registerNumber: registerNumber?.toUpperCase(),
       staffId: staffId?.toUpperCase(),
       username: username?.toLowerCase(),
       departmentId,
-      classId,
       designation,
       isActive: true,
     });
@@ -177,7 +196,24 @@ export async function resetPassword(req, res, next) {
       return res.status(404).json({ success: false, message: "User not found." });
     }
 
-    user.password = newPassword; // Plain text
+    let password = newPassword;
+    let message = "Password reset successfully.";
+
+    if (user.role === "student") {
+      // Students sign in with their date of birth, so that is what the
+      // password holds - the value the admin typed is not used.
+      const studentDob = studentPassword(user.dateOfBirth);
+      if (!studentDob) {
+        return res.status(400).json({
+          success: false,
+          message: "This student has no date of birth on file, so no password can be set.",
+        });
+      }
+      password = studentDob;
+      message = `Password reset to the student's date of birth: ${studentDob}`;
+    }
+
+    user.password = password;
     await user.save();
 
     await logAuditEvent({
@@ -193,7 +229,7 @@ export async function resetPassword(req, res, next) {
 
     res.json({
       success: true,
-      message: "Password reset successfully.",
+      message,
     });
   } catch (error) {
     next(error);

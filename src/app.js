@@ -4,6 +4,8 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
+import compression from "compression";
+
 // Ensure User model is registered before any route handlers execute
 import "./models/User.js";
 
@@ -35,6 +37,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+
+// High performance response compression (gzip/deflate/brotli)
+app.use(compression());
 
 // Enable Cross-Origin Resource Sharing
 app.use(

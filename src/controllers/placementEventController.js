@@ -1,6 +1,7 @@
 import { PlacementEvent } from "../models/PlacementEvent.js";
 import { getPagination } from "../utils/pagination.js";
 import { logAuditEvent } from "../services/auditService.js";
+import { deleteUploadedFile } from "../utils/fileUpload.js";
 
 /**
  * Normalise a client date into UTC midnight.
@@ -231,6 +232,11 @@ export async function updatePlacementEvent(req, res, next) {
       updates.tags = String(updates.tags).split(",").map((t) => t.trim()).filter(Boolean);
     }
 
+    if (req.file) {
+      const oldPoster = placementEvent.posterUrl || placementEvent.posterImage || placementEvent.poster;
+      if (oldPoster) deleteUploadedFile(oldPoster, "placement-events");
+    }
+
     Object.assign(placementEvent, resolvePosterFields({ ...placementEvent.toObject(), ...updates, file: req.file }));
     await placementEvent.save();
 
@@ -276,6 +282,12 @@ export async function deletePlacementEvent(req, res, next) {
           message: "You can only delete placement events within your assigned department.",
         });
       }
+    }
+
+    // Permanently remove poster from disk
+    const posterTarget = placementEvent.posterUrl || placementEvent.posterImage || placementEvent.poster;
+    if (posterTarget) {
+      deleteUploadedFile(posterTarget, "placement-events");
     }
 
     await PlacementEvent.findByIdAndDelete(req.params.id);

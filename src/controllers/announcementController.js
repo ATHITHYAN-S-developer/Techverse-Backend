@@ -47,7 +47,7 @@ export async function getAnnouncements(req, res, next) {
         .populate("departmentId", "code name")
         .populate({
           path: "createdBy",
-          select: "name staffId role username email departmentId",
+          select: "name staffId role username email departmentId departmentName departmentCode department",
           populate: { path: "departmentId", select: "code name" },
         })
         .sort({ isPinned: -1, createdAt: -1 })
@@ -82,7 +82,7 @@ export async function getAnnouncementById(req, res, next) {
       .populate("departmentId", "code name")
       .populate({
         path: "createdBy",
-        select: "name staffId role username email departmentId",
+        select: "name staffId role username email departmentId departmentName departmentCode department",
         populate: { path: "departmentId", select: "code name" },
       });
 
@@ -141,10 +141,18 @@ export async function createAnnouncement(req, res, next) {
       return res.status(400).json({ success: false, message: "Please select a deadline/end date." });
     }
 
-    // Teacher isolation: If teacher, target department must be teacher's assigned department
+    // Determine author's true department name
+    const userDeptName =
+      req.user.departmentName ||
+      req.user.department ||
+      req.user.departmentId?.name ||
+      (req.user.departmentCode ? `${req.user.departmentCode} Department` : "") ||
+      "";
+
+    // Teacher / Faculty isolation: target department defaults to teacher's assigned department
     let targetDept = departmentId;
-    if (req.user.role === "teacher") {
-      targetDept = req.user.departmentId;
+    if (req.user.role === "teacher" || req.user.role === "faculty" || req.user.role === "hod") {
+      targetDept = req.user.departmentId?._id || req.user.departmentId;
     }
     if (!targetDept || targetDept === "All" || targetDept === "all" || !mongoose.Types.ObjectId.isValid(targetDept)) {
       targetDept = null;
@@ -165,6 +173,16 @@ export async function createAnnouncement(req, res, next) {
       depts = req.body.department.split(",").map((s) => s.trim());
     }
     depts = depts.filter(Boolean);
+
+    // If faculty/teacher published and depts is default or legacy "CSE Department", adapt to their real department
+    if (
+      (req.user.role === "teacher" || req.user.role === "faculty") &&
+      userDeptName &&
+      (!depts.length || (depts.length === 1 && depts[0] === "CSE Department" && userDeptName !== "CSE Department"))
+    ) {
+      depts = [userDeptName];
+    }
+
     if (!depts.length) depts = ["All"];
     const primaryDeptString = depts.includes("All") ? "All" : depts.join(", ");
 
@@ -197,6 +215,9 @@ export async function createAnnouncement(req, res, next) {
       createdBy: req.user._id,
       authorName: req.user.name,
       authorRole: req.user.role,
+      authorDepartment: userDeptName || (req.user.role === "admin" ? "Administration" : "VCET Official"),
+      likes: [],
+      likesCount: 0,
       isActive: true,
     });
 
@@ -386,3 +407,60 @@ export async function deleteAnnouncement(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * @route   POST /api/announcements/:id/like
+ * @desc    Toggle like on an announcement
+ * @access  Public (Optionally Authenticated)
+ */
+export async function toggleLikeAnnouncement(req, res, next) {
+  try {
+    const isId = mongoose.Types.ObjectId.isValid(req.params.id);
+    const announcement = isId
+      ? await Announcement.findById(req.params.id)
+      : await Announcement.findOne({ title: req.params.id });
+
+    if (!announcement) {
+      return res.status(404).json({ success: false, message: "Announcement not found." });
+    }
+
+    if (!Array.isArray(announcement.likes)) {
+      announcement.likes = [];
+    }
+
+    const userId = req.user?._id;
+    let isLiked = false;
+
+    if (userId) {
+      const idx = announcement.likes.findIndex((id) => id && id.toString() === userId.toString());
+      if (idx > -1) {
+        announcement.likes.splice(idx, 1);
+        isLiked = false;
+      } else {
+        announcement.likes.push(userId);
+        isLiked = true;
+      }
+      announcement.likesCount = announcement.likes.length;
+    } else {
+      const action = req.body?.action || "toggle";
+      if (action === "unlike") {
+        announcement.likesCount = Math.max(0, (announcement.likesCount || 1) - 1);
+        isLiked = false;
+      } else {
+        announcement.likesCount = (announcement.likesCount || 0) + 1;
+        isLiked = true;
+      }
+    }
+
+    await announcement.save();
+
+    res.json({
+      success: true,
+      isLiked,
+      likesCount: announcement.likesCount,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
