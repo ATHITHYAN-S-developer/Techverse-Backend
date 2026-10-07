@@ -140,6 +140,7 @@ export async function createResource(req, res, next) {
     }
 
     const subjectField = subjectId || undefined;
+    const departmentField = departmentId?._id || departmentId || null;
 
     // Auto-derive file information if uploaded via multipart
     let finalFileUrl = fileUrl || req.body.externalUrl || "";
@@ -159,7 +160,7 @@ export async function createResource(req, res, next) {
     const newResource = await Resource.create({
       title,
       description,
-      departmentId,
+      departmentId: departmentField,
       subjectId: subjectField,
       classId,
       type,
