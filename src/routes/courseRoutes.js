@@ -16,6 +16,10 @@ import {
   submitModuleTestHandler,
   getDepartmentFaculty,
 } from "../controllers/courseController.js";
+import {
+  getCourseStudents,
+  exportCourseStudentsExcel,
+} from "../controllers/courseStudentsController.js";
 import { authenticate } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/roleMiddleware.js";
 import { uploadCourseThumbnail, compressUploadedImages } from "../utils/fileUpload.js";
@@ -35,6 +39,18 @@ router.get("/", optionalAuth, getCourses);
 router.get("/my/enrollments", authenticate, authorize("student"), getMyEnrollments);
 router.get("/my", authenticate, authorize("faculty", "teacher", "hod", "admin"), getMyCourses);
 router.get("/department-faculty", authenticate, authorize("hod", "admin"), getDepartmentFaculty);
+router.get(
+  "/:courseId/students",
+  authenticate,
+  authorize("faculty", "teacher", "hod", "admin"),
+  getCourseStudents
+);
+router.get(
+  "/:courseId/students/export",
+  authenticate,
+  authorize("faculty", "teacher", "hod", "admin"),
+  exportCourseStudentsExcel
+);
 router.get("/:slug/progression", authenticate, getCourseProgressionHandler);
 router.get("/:slug/modules/:moduleId/progression", authenticate, getModuleProgressionHandler);
 router.post("/:slug/modules/:moduleId/video-progress", authenticate, recordVideoProgressHandler);
