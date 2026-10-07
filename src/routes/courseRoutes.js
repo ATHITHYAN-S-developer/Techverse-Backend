@@ -44,7 +44,7 @@ router.get("/:slug", optionalAuth, getCourseBySlug);
 router.post(
   "/",
   authenticate,
-  authorize("hod", "admin", "faculty", "teacher"),
+  authorize("hod", "admin"),
   uploadCourseThumbnail.single("thumbnail"),
   compressUploadedImages,
   createCourse
@@ -53,26 +53,26 @@ router.post(
 router.patch(
   "/:id/publish-status",
   authenticate,
-  authorize("faculty", "teacher", "hod", "admin"),
+  authorize("hod", "admin"),
   togglePublishStatus
 );
 router.put(
   "/:id/publish-status",
   authenticate,
-  authorize("faculty", "teacher", "hod", "admin"),
+  authorize("hod", "admin"),
   togglePublishStatus
 );
 router.post(
   "/:id/publish-status",
   authenticate,
-  authorize("faculty", "teacher", "hod", "admin"),
+  authorize("hod", "admin"),
   togglePublishStatus
 );
 
 router.put(
   "/:id",
   authenticate,
-  authorize("faculty", "teacher", "hod", "admin"),
+  authorize("hod", "admin"),
   uploadCourseThumbnail.single("thumbnail"),
   compressUploadedImages,
   updateCourse
@@ -81,7 +81,7 @@ router.put(
 router.delete(
   "/:id",
   authenticate,
-  authorize("hod", "admin", "faculty", "teacher"),
+  authorize("hod", "admin"),
   deleteCourse
 );
 

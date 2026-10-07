@@ -16,6 +16,12 @@ import {
 } from "../services/moduleProgressionService.js";
 import { deleteUploadedFile } from "../utils/fileUpload.js";
 
+/**
+ * Normalize an id reference (raw ObjectId, string, or populated object
+ * { _id, code, name }) to a comparable hex string. Never use == for ids.
+ */
+const idOf = (v) => String(v?._id || v || "");
+
 
 /**
  * Remove internal ownership fields from a course object before it is exposed
@@ -171,14 +177,13 @@ export async function getMyCourses(req, res, next) {
         { assignedFacultyId: req.user._id },
       ];
       if (req.user.departmentId) {
-        hodOr.push({ departmentId: req.user.departmentId });
+        hodOr.push({ departmentId: idOf(req.user.departmentId) });
       }
       query.$or = hodOr;
     } else {
       // Regular Faculty: ONLY sees courses assigned to them by HOD. Other faculty cannot see the course.
       query.$or = [
         { assignedFacultyId: req.user._id },
-        ...(req.user.staffId ? [{ assignedFacultyStaffId: req.user.staffId }] : []),
         ...(req.user.name ? [{ assignedFacultyName: req.user.name }] : []),
       ];
     }
@@ -396,7 +401,7 @@ export async function getDepartmentFaculty(req, res, next) {
     }
 
     // Always use the HOD's own departmentId from the JWT — never trust client params
-    const hodDeptId = req.user.departmentId;
+    const hodDeptId = req.user.departmentId ? idOf(req.user.departmentId) : null;
     if (!hodDeptId && req.user.role === "hod") {
       return res.status(400).json({
         success: false,
@@ -493,7 +498,7 @@ export async function createCourse(req, res, next) {
       role: { $in: ["faculty", "teacher", "hod"] },
     };
     if (req.user.role === "hod" && req.user.departmentId) {
-      facultyQuery.departmentId = req.user.departmentId;
+      facultyQuery.departmentId = idOf(req.user.departmentId);
     }
 
     const facultyUser = await User.findOne(facultyQuery);
@@ -531,7 +536,7 @@ export async function createCourse(req, res, next) {
     const isDepartmentOnly = targetAudience === "department" || req.body.isDepartmentOnly === "true" || req.body.isDepartmentOnly === true;
 
     // Always resolve departmentId: from HOD, or fallback to assigned faculty's department
-    let resolvedDepartmentId = req.user.departmentId || undefined;
+    let resolvedDepartmentId = req.user.departmentId ? idOf(req.user.departmentId) : undefined;
     if (!resolvedDepartmentId && facultyUser?.departmentId) {
       resolvedDepartmentId = facultyUser.departmentId;
     }
@@ -580,7 +585,7 @@ export async function createCourse(req, res, next) {
 /**
  * @route   PATCH /api/courses/:id/publish-status
  * @desc    Toggle or set course publish status (Draft vs Published to PrepZone)
- * @access  Protected (Faculty / Teacher / HOD / Admin)
+ * @access  Protected (HOD of the course's department / Admin)
  */
 export async function togglePublishStatus(req, res, next) {
   try {
@@ -590,20 +595,16 @@ export async function togglePublishStatus(req, res, next) {
     }
 
     const isSuperAdmin = req.user.role === "admin";
-    const isCreator = course.createdBy && course.createdBy.toString() === req.user._id.toString();
-    const isAssigned =
-      (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
-      (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId);
     const isHodDept =
       req.user.role === "hod" &&
       course.departmentId &&
       req.user.departmentId &&
-      course.departmentId.toString() === req.user.departmentId.toString();
+      idOf(course.departmentId) === idOf(req.user.departmentId);
 
-    if (!isSuperAdmin && !isCreator && !isAssigned && !isHodDept) {
+    if (!isSuperAdmin && !isHodDept) {
       return res.status(403).json({
         success: false,
-        message: "You are not authorized to change the publication status of this course.",
+        message: "Only the HOD of this course's department or an admin can change its publication status.",
       });
     }
 
@@ -635,7 +636,7 @@ export async function togglePublishStatus(req, res, next) {
 /**
  * @route   PUT /api/courses/:id
  * @desc    Update course with optional cover thumbnail
- * @access  Protected (Admin / Teacher / Faculty / HOD)
+ * @access  Protected (HOD of the course's department / Admin)
  */
 export async function updateCourse(req, res, next) {
   try {
@@ -644,18 +645,18 @@ export async function updateCourse(req, res, next) {
       return res.status(404).json({ success: false, message: "Course not found." });
     }
 
-    // Teacher / Faculty ownership check: broadened to createdBy == me OR assignedFacultyId == me
-    if (req.user.role === "teacher" || req.user.role === "faculty") {
-      const isOwner =
-        (course.createdBy && course.createdBy.toString() === req.user._id.toString()) ||
-        (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
-        (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId);
-      if (!isOwner) {
-        return res.status(403).json({
-          success: false,
-          message: "You can only modify courses assigned to or created by yourself.",
-        });
-      }
+    // Course metadata is managed only by the department HOD or admin.
+    const isSuperAdmin = req.user.role === "admin";
+    const isHodDept =
+      req.user.role === "hod" &&
+      course.departmentId &&
+      req.user.departmentId &&
+      idOf(course.departmentId) === idOf(req.user.departmentId);
+    if (!isSuperAdmin && !isHodDept) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the HOD of this course's department or an admin can modify this course. Assigned faculty manage the course modules.",
+      });
     }
 
     const updates = { ...req.body };
@@ -675,6 +676,10 @@ export async function updateCourse(req, res, next) {
       const facultyUser = await User.findOne({
         _id: updates.assignedFacultyId,
         role: { $in: ["faculty", "teacher", "hod"] },
+        // HODs may only assign faculty within their own department.
+        ...(req.user.role === "hod" && req.user.departmentId
+          ? { departmentId: idOf(req.user.departmentId) }
+          : {}),
       });
       if (!facultyUser) {
         return res.status(400).json({
@@ -703,7 +708,7 @@ export async function updateCourse(req, res, next) {
 
     if ((updates.isDepartmentOnly || updates.targetAudience === "department") && !course.departmentId) {
       if (req.user.departmentId) {
-        updates.departmentId = req.user.departmentId;
+        updates.departmentId = idOf(req.user.departmentId);
       } else if (course.assignedFacultyId) {
         const facUser = await User.findById(course.assignedFacultyId);
         if (facUser?.departmentId) {
@@ -735,7 +740,7 @@ export async function updateCourse(req, res, next) {
 /**
  * @route   DELETE /api/courses/:id
  * @desc    Delete course
- * @access  Protected (Admin / Teacher / Faculty / HOD)
+ * @access  Protected (HOD of the course's department / Admin)
  */
 export async function deleteCourse(req, res, next) {
   try {
@@ -749,32 +754,16 @@ export async function deleteCourse(req, res, next) {
     }
 
     const isSuperAdmin = req.user.role === "admin";
-    const isCreator = course.createdBy && course.createdBy.toString() === req.user._id.toString();
-    const isHod =
-      req.user.role === "hod" ||
-      String(req.user.staffId || "").includes("104") ||
-      String(req.user.staffId || "").toUpperCase().includes("HOD") ||
-      String(req.user.designation || "").toLowerCase().includes("hod");
     const isHodDept =
-      isHod &&
-      (!course.departmentId ||
-        !req.user.departmentId ||
-        course.departmentId.toString() === req.user.departmentId.toString() ||
-        isCreator);
-    const isAssigned =
-      (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
-      (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId);
-    const isDeptFaculty =
-      (req.user.role === "faculty" || req.user.role === "teacher") &&
-      (!course.departmentId ||
-        !req.user.departmentId ||
-        course.departmentId.toString() === req.user.departmentId.toString() ||
-        isCreator);
+      req.user.role === "hod" &&
+      course.departmentId &&
+      req.user.departmentId &&
+      idOf(course.departmentId) === idOf(req.user.departmentId);
 
-    if (!isSuperAdmin && !isCreator && !isHodDept && !isAssigned && !isDeptFaculty) {
+    if (!isSuperAdmin && !isHodDept) {
       return res.status(403).json({
         success: false,
-        message: "You can only delete courses created by you, assigned to you, or within your department.",
+        message: "Only the HOD of this course's department or an admin can delete this course.",
       });
     }
 

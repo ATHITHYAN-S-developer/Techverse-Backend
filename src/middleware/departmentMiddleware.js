@@ -167,16 +167,21 @@ function resolveTeacherDepartment(req, res) {
 }
 
 /**
- * Ensures teachers can only create, edit, or delete modules for courses
- * assigned to or created by themselves. Admin has college-wide authority.
+ * Ensures only the assigned faculty member can create, edit, or delete
+ * modules for a course. HOD is limited to their own department's courses;
+ * admin has college-wide authority.
  */
 export async function checkModuleCourseOwnership(req, res, next) {
   try {
-    if (req.user?.role === "admin" || req.user?.role === "hod") {
+    if (req.user?.role === "admin") {
       return next();
     }
 
-    if (req.user?.role !== "teacher" && req.user?.role !== "faculty") {
+    if (
+      req.user?.role !== "teacher" &&
+      req.user?.role !== "faculty" &&
+      req.user?.role !== "hod"
+    ) {
       return res.status(403).json({
         success: false,
         message: "Only faculty, HOD, or administrators can modify course modules.",
@@ -215,18 +220,22 @@ export async function checkModuleCourseOwnership(req, res, next) {
       });
     }
 
-    const isOwner =
-      req.user.role === "admin" ||
-      req.user.role === "hod" ||
-      (course.assignedFacultyId && course.assignedFacultyId.toString() === req.user._id.toString()) ||
-      (course.assignedFacultyStaffId && req.user.staffId && course.assignedFacultyStaffId === req.user.staffId) ||
-      (course.assignedFacultyName && req.user.name && course.assignedFacultyName.toLowerCase().trim() === req.user.name.toLowerCase().trim()) ||
-      (course.createdBy && course.createdBy.toString() === req.user._id.toString());
+    // Admin: full access. HOD: only their own department's courses.
+    // Faculty: only courses explicitly assigned to them by the HOD/Admin.
+    const isSuperAdmin = req.user.role === "admin";
+    const isSameDeptHod =
+      req.user.role === "hod" &&
+      course.departmentId &&
+      req.user.departmentId &&
+      deptIdOf(course.departmentId) === deptIdOf(req.user.departmentId);
+    const isAssignedFaculty =
+      Boolean(course.assignedFacultyId) &&
+      String(course.assignedFacultyId) === String(req.user._id);
 
-    if (!isOwner) {
+    if (!isSuperAdmin && !isSameDeptHod && !isAssignedFaculty) {
       return res.status(403).json({
         success: false,
-        message: "You can only manage modules for courses assigned to you by the HOD or Admin.",
+        message: "You can only manage modules of courses assigned to you by the HOD or Admin.",
         code: "COURSE_OWNERSHIP_DENIED",
       });
     }
