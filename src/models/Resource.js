@@ -25,6 +25,18 @@ const resourceSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    category: {
+      type: String,
+      default: "",
+    },
+    platform: {
+      type: String,
+      default: "",
+    },
+    featured: {
+      type: Boolean,
+      default: false,
+    },
     type: {
       type: String,
       enum: [

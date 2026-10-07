@@ -5,6 +5,18 @@ import { CourseModule } from "../models/CourseModule.js";
 import { Subject } from "../models/Subject.js";
 
 /**
+ * Normalize a department reference to its hex ObjectId string. Department ids
+ * can be a raw ObjectId, a string, or a Mongoose-populated object
+ * ({ _id, code, name }) after authMiddleware populates them - callers must not
+ * blindly call .toString() on a populated object (that yields "[object Object]").
+ */
+const deptIdOf = (value) => {
+  if (!value) return null;
+  const id = value._id || value;
+  return String(id);
+};
+
+/**
  * Ensures teachers can only create or mutate resources/announcements
  * belonging strictly to their assigned department.
  */
@@ -24,7 +36,7 @@ export function checkDepartmentAccess(resourceType = "body") {
         });
       }
 
-      const teacherDeptId = req.user.departmentId ? req.user.departmentId.toString() : null;
+const teacherDeptId = deptIdOf(req.user.departmentId);
 
       if (!teacherDeptId) {
         return res.status(403).json({
@@ -36,7 +48,7 @@ export function checkDepartmentAccess(resourceType = "body") {
 
       // Check on Creation (from request body)
       if (resourceType === "body") {
-        const targetDeptId = req.body?.departmentId ? req.body.departmentId.toString() : null;
+        const targetDeptId = deptIdOf(req.body?.departmentId);
         if (targetDeptId && targetDeptId !== teacherDeptId) {
           return res.status(403).json({
             success: false,
@@ -66,7 +78,7 @@ export function checkDepartmentAccess(resourceType = "body") {
           });
         }
 
-        if (existing.departmentId && existing.departmentId.toString() !== teacherDeptId) {
+        if (existing.departmentId && deptIdOf(existing.departmentId) !== teacherDeptId) {
           return res.status(403).json({
             success: false,
             message: "Department Access Denied: You cannot modify a resource belonging to another department.",
@@ -141,7 +153,7 @@ function resolveTeacherDepartment(req, res) {
     return { passed: false };
   }
 
-  const teacherDeptId = req.user.departmentId ? req.user.departmentId.toString() : null;
+  const teacherDeptId = deptIdOf(req.user.departmentId);
   if (!teacherDeptId) {
     res.status(403).json({
       success: false,
@@ -244,7 +256,7 @@ export async function checkSubjectDepartment(req, res, next) {
       });
     }
 
-    if (subject.departmentId && subject.departmentId.toString() !== result.teacherDeptId) {
+    if (subject.departmentId && deptIdOf(subject.departmentId) !== result.teacherDeptId) {
       return res.status(403).json({
         success: false,
         message: "Department Access Denied: You cannot modify a subject belonging to another department.",
@@ -253,7 +265,7 @@ export async function checkSubjectDepartment(req, res, next) {
     }
 
     // Teachers cannot re-assign a subject to another department
-    const bodyDeptId = req.body?.departmentId ? req.body.departmentId.toString() : null;
+    const bodyDeptId = deptIdOf(req.body?.departmentId);
     if (bodyDeptId && bodyDeptId !== result.teacherDeptId) {
       return res.status(403).json({
         success: false,
