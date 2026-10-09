@@ -36,6 +36,7 @@ export async function getCodingTests(req, res, next) {
       success: true,
       count: tests.length,
       codingTests: tests,
+      difficultyOptions: ["Easy", "Medium", "Hard"],
     });
   } catch (error) {
     next(error);
