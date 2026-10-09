@@ -52,7 +52,6 @@ const resourceSchema = new mongoose.Schema(
         "website",
         "aptitude",
         "updates",
-        "technology",
         "youtube",
       ],
       default: "notes",
