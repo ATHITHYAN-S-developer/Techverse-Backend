@@ -43,7 +43,11 @@ async function assertCourseStudentsAccess(req, course) {
       course.departmentId &&
       req.user.departmentId &&
       idOf(course.departmentId) === idOf(req.user.departmentId);
-    if (sameDept) return null;
+    const isCreatorOrAssigned =
+      idOf(course.createdBy) === idOf(req.user._id) ||
+      idOf(course.assignedFacultyId) === idOf(req.user._id);
+
+    if (sameDept || isCreatorOrAssigned || !course.departmentId) return null;
     return {
       status: 403,
       message: "Only the HOD of this course's department can view its students.",
@@ -78,7 +82,7 @@ async function buildCourseStudentsReport(course) {
 
   const [users, progressDocs] = await Promise.all([
     User.find({ _id: { $in: studentIds } })
-      .select("name email registerNumber departmentCode year section")
+      .select("name email registerNumber departmentCode department year section")
       .lean(),
     ModuleProgress.find({ courseId: course._id, studentId: { $in: studentIds } }).lean(),
   ]);
@@ -106,6 +110,9 @@ async function buildCourseStudentsReport(course) {
       name: user.name || "",
       email: user.email || "",
       registerNumber: user.registerNumber || "",
+      department: user.department || user.departmentCode || "",
+      year: user.year || "",
+      section: user.section || "",
       enrolledAt: enr.startedAt || enr.createdAt,
       enrollmentStatus: ENROLLMENT_STATUS_LABELS[enr.status] || enr.status || "",
       progressPercentage: Number(enr.progressPercentage || 0),

@@ -2,6 +2,7 @@ import http from "http";
 import app from "./app.js";
 import { connectDB } from "./config/db.js";
 import { ENV } from "./config/env.js";
+import { startStorageServer } from "./storageServer.js";
 
 async function startServer() {
   try {
@@ -9,6 +10,7 @@ async function startServer() {
     await connectDB();
 
     const server = http.createServer(app);
+    let storageServerInstance = null;
 
     server.on("error", (error) => {
       if (error.code === "EADDRINUSE") {
@@ -30,11 +32,30 @@ async function startServer() {
       console.log(`====================================================`);
     });
 
-    process.once("SIGUSR2", () => {
+    // Auto-start dedicated announcement storage server if configured
+    if (ENV.AUTO_START_STORAGE_SERVER) {
+      storageServerInstance = startStorageServer(ENV.STORAGE_PORT);
+    }
+
+    const shutdown = (signal) => {
+      if (storageServerInstance) {
+        try {
+          storageServerInstance.close();
+        } catch {}
+      }
       server.close(() => {
-        process.kill(process.pid, "SIGUSR2");
+        if (signal === "SIGUSR2") {
+          process.kill(process.pid, "SIGUSR2");
+        } else {
+          process.exit(0);
+        }
       });
-    });
+    };
+
+    process.once("SIGUSR2", () => shutdown("SIGUSR2"));
+    process.once("SIGINT", () => shutdown("SIGINT"));
+    process.once("SIGTERM", () => shutdown("SIGTERM"));
+
   } catch (error) {
     console.error("Failed to start server:", error);
     process.exit(1);

@@ -185,8 +185,9 @@ function printFix(family, toolId) {
 }
 
 export function main() {
-  if (process.env.SKIP_REQUIREMENTS === "1") {
-    log(`${YELLOW}SKIP_REQUIREMENTS=1 set — skipping requirements check.${RESET}\n`);
+  const skipEnv = process.env.SKIP_REQUIREMENTS || loadEnvVar("SKIP_REQUIREMENTS");
+  if (skipEnv === "1" || skipEnv === "true") {
+    log(`${YELLOW}SKIP_REQUIREMENTS set — skipping requirements check.${RESET}\n`);
     return 0;
   }
 
@@ -207,8 +208,14 @@ export function main() {
     if (result.found) {
       ok(`[${tool.id}] ${tool.label} — ${result.version}`);
     } else {
-      fail(`[${tool.id}] ${tool.label} — NOT FOUND`);
-      blockers.push({ id: tool.id, label: tool.label });
+      // On native Windows, GCC/G++ are only needed for C/C++ compilation in Coding Arena
+      if (process.platform === "win32" && (tool.id === "gcc" || tool.id === "gpp")) {
+        warn(`[${tool.id}] ${tool.label} — NOT FOUND (C/C++ arena runner only, non-blocking on Windows)`);
+        warnings.push(`${tool.label} is not installed (only needed for C/C++ code runner).`);
+      } else {
+        fail(`[${tool.id}] ${tool.label} — NOT FOUND`);
+        blockers.push({ id: tool.id, label: tool.label });
+      }
     }
   }
 

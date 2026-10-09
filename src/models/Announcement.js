@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { buildAnnouncementFileUrl } from "../services/announcementStorageService.js";
 
 const announcementSchema = new mongoose.Schema(
   {
@@ -111,7 +112,9 @@ announcementSchema.pre("save", function (next) {
     this.content = this.description;
   }
   if (!this.imageUrl && this.image) {
-    this.imageUrl = this.image.startsWith("http") ? this.image : `/uploads/announcements/${this.image}`;
+    this.imageUrl = this.image.startsWith("http")
+      ? this.image
+      : buildAnnouncementFileUrl(this.image);
   }
   next();
 });

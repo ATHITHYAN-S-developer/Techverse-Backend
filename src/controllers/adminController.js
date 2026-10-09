@@ -112,7 +112,7 @@ export async function createUser(req, res, next) {
       role,
       name,
       email: email?.toLowerCase(),
-      password: accountPassword, // Plain text storage
+      password: accountPassword, // hashed by the User model's pre-save hook
       dateOfBirth: studentDateOfBirth,
       registerNumber: registerNumber?.toUpperCase(),
       staffId: staffId?.toUpperCase(),

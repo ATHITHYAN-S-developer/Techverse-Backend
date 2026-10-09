@@ -29,6 +29,7 @@ import { connectDB } from "../config/db.js";
 import { ALL_DEPARTMENTS } from "../data/departments.js";
 import { Department } from "../models/Department.js";
 import { User } from "../models/User.js";
+import { hashUpdatePasswords } from "../utils/password.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGIN_DIR = path.resolve(__dirname, "../data/logins");
@@ -144,6 +145,10 @@ async function seedDepartments() {
 async function runBulk(operations) {
   if (!operations.length) return { result: null, errors: [] };
   try {
+    // bulkWrite bypasses model middleware, so hash any plain-text passwords here.
+    await Promise.all(
+      operations.map((op) => (op.updateOne ? hashUpdatePasswords(op.updateOne.update) : null))
+    );
     const result = await User.bulkWrite(operations, { ordered: false });
     return { result, errors: [] };
   } catch (error) {

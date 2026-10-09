@@ -304,9 +304,13 @@ export const deleteUploadedFile = (filePathOrName, subFolder = "announcements") 
     let clean = filePathOrName.trim();
     if (!clean) return;
 
-    // If it's a data URI or an external web URL that doesn't contain /uploads/, skip
+    // If it's a data URI or an external web URL that doesn't contain /uploads/ or /files/, skip
     if (clean.startsWith("data:")) return;
-    if ((clean.startsWith("http://") || clean.startsWith("https://")) && !clean.includes("/uploads/")) {
+    if (
+      (clean.startsWith("http://") || clean.startsWith("https://")) &&
+      !clean.includes("/uploads/") &&
+      !clean.includes("/files/")
+    ) {
       return;
     }
 
@@ -314,6 +318,9 @@ export const deleteUploadedFile = (filePathOrName, subFolder = "announcements") 
     if (clean.includes("/uploads/")) {
       const rel = clean.split("/uploads/")[1].replace(/\\/g, "/");
       absoluteTarget = path.resolve(baseUploadDir, rel);
+    } else if (clean.includes("/files/")) {
+      const filename = path.basename(clean.split("?")[0]);
+      absoluteTarget = path.resolve(baseUploadDir, subFolder, filename);
     } else if (clean.startsWith("uploads/")) {
       const rel = clean.replace(/^uploads\//, "").replace(/\\/g, "/");
       absoluteTarget = path.resolve(baseUploadDir, rel);

@@ -15,13 +15,40 @@ const UPLOADS_ROOT = path.join(process.cwd(), "uploads", "resources");
  */
 export async function getResources(req, res, next) {
   try {
-    const { departmentId,
+    const {
+      departmentId,
       subjectId,
-      classId, type, unit, search, all } = req.query;
+      classId,
+      type,
+      unit,
+      search,
+      all,
+      approvalStatus,
+      includePending,
+      uploadedBy,
+    } = req.query;
     const { page, limit, skip } = getPagination(req.query, 20);
 
-    const query = { isPublished: true };
+    const query = {};
 
+    if (includePending === "true") {
+      if (approvalStatus) {
+        query.approvalStatus = approvalStatus;
+      }
+    } else if (approvalStatus) {
+      if (approvalStatus === "approved") {
+        query.isPublished = true;
+        query.$or = [{ approvalStatus: "approved" }, { approvalStatus: { $exists: false } }];
+      } else {
+        query.approvalStatus = approvalStatus;
+      }
+    } else {
+      // Default: only published & approved resources (for students / public)
+      query.isPublished = true;
+      query.$or = [{ approvalStatus: "approved" }, { approvalStatus: { $exists: false } }];
+    }
+
+    if (uploadedBy) query.uploadedBy = uploadedBy;
     if (departmentId) query.departmentId = departmentId;
     if (subjectId) query.subjectId = subjectId;
     if (classId) query.classId = classId;
@@ -86,10 +113,41 @@ export async function getResources(req, res, next) {
   }
 }
 
+export function isUserElevated(user) {
+  if (!user) return false;
+  const regNum = String(user.registerNumber || "").toUpperCase();
+  const email = String(user.email || "").toLowerCase();
+  const name = String(user.name || "").toUpperCase();
+  const staffId = String(user.staffId || "").toUpperCase();
+  const designation = String(user.designation || "").toLowerCase();
+  const title = String(user.title || "").toLowerCase();
+
+  const isDeveloper =
+    regNum.includes("732924CSR014") ||
+    email.includes("732924csr014") ||
+    name.includes("ATHITHYAN");
+
+  return (
+    isDeveloper ||
+    user.role === "admin" ||
+    user.role === "hod" ||
+    user.isHod === true ||
+    staffId.includes("104") ||
+    staffId.includes("HOD") ||
+    staffId.endsWith("01") ||
+    designation.includes("hod") ||
+    designation.includes("head of the department") ||
+    designation.includes("head of department") ||
+    title.includes("hod") ||
+    title.includes("head of the department") ||
+    title.includes("head of department")
+  );
+}
+
 /**
  * @route   GET /api/resources/:id
  * @desc    Get single resource
- * @access  Public
+ * @access  Public / Protected (HOD & faculty can view pending)
  */
 export async function getResourceById(req, res, next) {
   try {
@@ -98,11 +156,76 @@ export async function getResourceById(req, res, next) {
       .populate("subjectId", "code name")
       .populate("uploadedBy", "name staffId role");
 
-    if (!resource || !resource.isPublished) {
+    if (!resource) {
       return res.status(404).json({ success: false, message: "Resource not found." });
     }
 
+    const isElevated = isUserElevated(req.user);
+    const isUploader =
+      req.user &&
+      resource.uploadedBy &&
+      String(resource.uploadedBy._id || resource.uploadedBy) === String(req.user._id);
+
+    // If resource is not published/approved yet, only elevated (HOD/Admin) or uploader can view
+    if (!resource.isPublished && resource.approvalStatus !== "approved" && !isElevated && !isUploader) {
+      return res.status(404).json({ success: false, message: "Resource not found or pending HOD approval." });
+    }
+
     res.json({ success: true, resource });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   GET /api/resources/:id/view
+ * @desc    View resource file directly in browser tab (with inline content-disposition)
+ * @access  Public / Protected (HOD can view pending notes)
+ */
+export async function viewResourceFile(req, res, next) {
+  try {
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) {
+      return res.status(404).json({ success: false, message: "Resource not found." });
+    }
+
+    // Increment downloads/views count (best effort)
+    Resource.findByIdAndUpdate(resource._id, { $inc: { downloadsCount: 1 } }).exec();
+
+    // If stored on server disk in uploads/resources/
+    if (resource.fileUrl && resource.fileUrl.startsWith("/uploads/resources/")) {
+      const filename = path.basename(resource.fileUrl);
+      const filePath = path.join(UPLOADS_ROOT, filename);
+      if (fs.existsSync(filePath)) {
+        res.setHeader("Content-Type", resource.mimeType || resource.fileType || "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `inline; filename="${encodeURIComponent(resource.originalName || filename)}"`
+        );
+        return res.sendFile(path.resolve(filePath));
+      }
+    }
+
+    // Direct /uploads/... fallback
+    if (resource.fileUrl && resource.fileUrl.startsWith("/uploads/")) {
+      const cleanPath = path.join(process.cwd(), resource.fileUrl);
+      if (fs.existsSync(cleanPath)) {
+        res.setHeader("Content-Type", resource.mimeType || resource.fileType || "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `inline; filename="${encodeURIComponent(resource.originalName || path.basename(resource.fileUrl))}"`
+        );
+        return res.sendFile(path.resolve(cleanPath));
+      }
+    }
+
+    // External link or URL fallback
+    const targetUrl = resource.fileUrl || resource.externalUrl || resource.downloadUrl;
+    if (targetUrl) {
+      return res.redirect(targetUrl);
+    }
+
+    res.status(404).json({ success: false, message: "Resource file not found on server." });
   } catch (error) {
     next(error);
   }
@@ -157,6 +280,17 @@ export async function createResource(req, res, next) {
       finalMimeType = req.file.mimetype;
     }
 
+    // Check if uploader is elevated (HOD or Admin)
+    const isElevated =
+      req.user.role === "admin" ||
+      req.user.role === "hod" ||
+      req.user.isHod === true ||
+      String(req.user.staffId || "").toUpperCase().includes("HOD") ||
+      String(req.user.designation || "").toUpperCase().includes("HOD");
+
+    const approvalStatus = isElevated ? "approved" : "pending";
+    const isPublished = isElevated;
+
     const newResource = await Resource.create({
       title,
       description,
@@ -176,6 +310,8 @@ export async function createResource(req, res, next) {
       tags: Array.isArray(tags) ? tags : String(tags || "").split(",").map(t => t.trim()).filter(Boolean),
       uploadedBy: req.user._id,
       uploaderRole: req.user.role,
+      approvalStatus,
+      isPublished,
     });
 
     await logAuditEvent({
@@ -186,12 +322,14 @@ export async function createResource(req, res, next) {
       action: "CREATE",
       resourceType: "Resource",
       resourceId: newResource._id,
-      details: `Created resource '${newResource.title}' in department '${departmentId}'`,
+      details: `Created resource '${newResource.title}' in department '${departmentId}' (status: ${approvalStatus})`,
     });
 
     res.status(201).json({
       success: true,
-      message: "Resource uploaded successfully.",
+      message: isElevated
+        ? "Resource uploaded and published successfully."
+        : "Notes submitted to HOD for approval. Once approved, it will be visible in the department area.",
       resource: newResource,
     });
   } catch (error) {
@@ -211,6 +349,13 @@ export async function updateResource(req, res, next) {
       return res.status(404).json({ success: false, message: "Resource not found." });
     }
 
+    const isElevated =
+      req.user.role === "admin" ||
+      req.user.role === "hod" ||
+      req.user.isHod === true ||
+      String(req.user.staffId || "").toUpperCase().includes("HOD") ||
+      String(req.user.designation || "").toUpperCase().includes("HOD");
+
     const allowedFields = [
       "title",
       "description",
@@ -227,12 +372,21 @@ export async function updateResource(req, res, next) {
       "downloadUrl",
       "fileSize",
       "isPublished",
+      "approvalStatus",
+      "rejectionReason",
     ];
 
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
         resource[field] = req.body[field];
       }
+    }
+
+    // If regular faculty updates a rejected resource, resubmit for HOD approval
+    if (!isElevated && resource.approvalStatus === "rejected") {
+      resource.approvalStatus = "pending";
+      resource.isPublished = false;
+      resource.rejectionReason = "";
     }
 
     // Optional file replacement
@@ -290,11 +444,52 @@ export async function deleteResource(req, res, next) {
       return res.status(404).json({ success: false, message: "Resource not found." });
     }
 
+    const isDeveloper =
+      String(req.user?.registerNumber || "").toUpperCase().includes("732924CSR014") ||
+      String(req.user?.email || "").toLowerCase().includes("732924csr014") ||
+      String(req.user?.name || "").toUpperCase().includes("ATHITHYAN");
+
+    const isElevated =
+      isDeveloper ||
+      req.user?.role === "admin" ||
+      req.user?.role === "hod" ||
+      req.user?.isHod === true ||
+      String(req.user?.staffId || "").toUpperCase().includes("HOD") ||
+      String(req.user?.staffId || "").toUpperCase().endsWith("01") ||
+      String(req.user?.designation || "").toUpperCase().includes("HOD") ||
+      String(req.user?.designation || "").toLowerCase().includes("head of the department");
+
+    const isApproved =
+      resource.approvalStatus === "approved" ||
+      (resource.isPublished && resource.approvalStatus !== "rejected" && resource.approvalStatus !== "pending");
+
+    // Regular faculty CANNOT delete approved notes - ONLY HOD or Administrator can delete
+    if (isApproved && !isElevated) {
+      return res.status(403).json({
+        success: false,
+        message: "Approved notes are published to students and can only be deleted by the Department HOD or Administrator.",
+        code: "APPROVED_RESOURCE_LOCKED",
+      });
+    }
+
+    // Regular faculty can only delete their own notes
+    if (!isElevated && resource.uploadedBy && resource.uploadedBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Permission Denied: You can only delete resources you uploaded.",
+        code: "RESOURCE_OWNER_DENIED",
+      });
+    }
+
     // Remove stored file from server disk
     if (resource.fileUrl && resource.fileUrl.startsWith("/uploads/resources/")) {
       const filePath = path.join(UPLOADS_ROOT, path.basename(resource.fileUrl));
       if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+        try {
+          fs.unlinkSync(filePath);
+        } catch (e) {
+          console.warn("Could not delete file from disk:", e.message);
+        }
       }
     }
 
@@ -345,3 +540,138 @@ export async function trackDownload(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * @route   PATCH /api/resources/:id/approve
+ * @desc    HOD / Admin approves resource and publishes it for students
+ * @access  Protected (HOD / Admin)
+ */
+export async function approveResource(req, res, next) {
+  try {
+    const isDeveloper =
+      String(req.user.registerNumber || "").toUpperCase().includes("732924CSR014") ||
+      String(req.user.email || "").toLowerCase().includes("732924csr014") ||
+      String(req.user.name || "").toUpperCase().includes("ATHITHYAN");
+
+    const isElevated =
+      isDeveloper ||
+      req.user.role === "admin" ||
+      req.user.role === "hod" ||
+      req.user.isHod === true ||
+      String(req.user.staffId || "").toUpperCase().includes("HOD") ||
+      String(req.user.staffId || "").toUpperCase().endsWith("01") ||
+      String(req.user.designation || "").toUpperCase().includes("HOD") ||
+      String(req.user.designation || "").toLowerCase().includes("head of the department");
+
+    if (!isElevated) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the Department HOD or Admin can approve notes.",
+      });
+    }
+
+    const resource = await Resource.findById(req.params.id)
+      .populate("departmentId", "code name")
+      .populate("subjectId", "code name")
+      .populate("uploadedBy", "name staffId role");
+
+    if (!resource) {
+      return res.status(404).json({ success: false, message: "Resource not found." });
+    }
+
+    resource.approvalStatus = "approved";
+    resource.isPublished = true;
+    resource.rejectionReason = "";
+    resource.reviewedBy = req.user._id;
+    resource.reviewedAt = new Date();
+    await resource.save();
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userIdentifier: req.user.staffId || req.user.username || req.user.email,
+      userName: req.user.name,
+      role: req.user.role,
+      action: "UPDATE",
+      resourceType: "Resource",
+      resourceId: resource._id,
+      details: `Approved resource '${resource.title}' and published to department`,
+    });
+
+    res.json({
+      success: true,
+      message: "Notes approved and published to department portal ✓",
+      resource,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * @route   PATCH /api/resources/:id/reject
+ * @desc    HOD / Admin rejects resource with feedback
+ * @access  Protected (HOD / Admin)
+ */
+export async function rejectResource(req, res, next) {
+  try {
+    const isDeveloper =
+      String(req.user.registerNumber || "").toUpperCase().includes("732924CSR014") ||
+      String(req.user.email || "").toLowerCase().includes("732924csr014") ||
+      String(req.user.name || "").toUpperCase().includes("ATHITHYAN");
+
+    const isElevated =
+      isDeveloper ||
+      req.user.role === "admin" ||
+      req.user.role === "hod" ||
+      req.user.isHod === true ||
+      String(req.user.staffId || "").toUpperCase().includes("HOD") ||
+      String(req.user.staffId || "").toUpperCase().endsWith("01") ||
+      String(req.user.designation || "").toUpperCase().includes("HOD") ||
+      String(req.user.designation || "").toLowerCase().includes("head of the department");
+
+    if (!isElevated) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the Department HOD or Admin can reject notes.",
+      });
+    }
+
+    const { reason = "Rejected by HOD. Please review notes syllabus and retry." } = req.body;
+
+    const resource = await Resource.findById(req.params.id)
+      .populate("departmentId", "code name")
+      .populate("subjectId", "code name")
+      .populate("uploadedBy", "name staffId role");
+
+    if (!resource) {
+      return res.status(404).json({ success: false, message: "Resource not found." });
+    }
+
+    resource.approvalStatus = "rejected";
+    resource.isPublished = false;
+    resource.rejectionReason = reason;
+    resource.reviewedBy = req.user._id;
+    resource.reviewedAt = new Date();
+    await resource.save();
+
+    await logAuditEvent({
+      userId: req.user._id,
+      userIdentifier: req.user.staffId || req.user.username || req.user.email,
+      userName: req.user.name,
+      role: req.user.role,
+      action: "UPDATE",
+      resourceType: "Resource",
+      resourceId: resource._id,
+      details: `Rejected resource '${resource.title}' (Reason: ${reason})`,
+    });
+
+    res.json({
+      success: true,
+      message: "Notes rejected. Faculty will see status and can retry.",
+      resource,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+

@@ -85,7 +85,7 @@ export async function getCodingTestById(req, res, next) {
 export async function getCodingProgress(req, res, next) {
   try {
     const { id } = req.params;
-    const isStaff = ["admin", "teacher", "faculty"].includes(req.user?.role);
+    const isStaff = ["admin", "teacher", "faculty", "hod"].includes(req.user?.role);
 
     const test = (await CodingTest.findById(id)) || (await CodingTest.findOne({ slug: id }));
     if (!test) {
@@ -103,7 +103,7 @@ export async function getCodingProgress(req, res, next) {
 
     const records = await CodingProgress.find(match).populate({
       path: "studentId",
-      select: "name registerNumber email",
+      select: "name registerNumber email departmentCode department year section",
     });
 
     const problems = test.problems.map((p) => ({ _id: p._id, title: p.title, slug: p.slug }));
@@ -119,6 +119,9 @@ export async function getCodingProgress(req, res, next) {
           name: student.name,
           registerNumber: student.registerNumber,
           email: student.email,
+          department: student.department || student.departmentCode || "",
+          year: student.year || "",
+          section: student.section || "",
           problems: {},
         });
       }

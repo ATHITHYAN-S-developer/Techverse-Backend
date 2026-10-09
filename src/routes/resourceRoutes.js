@@ -6,16 +6,20 @@ import {
   updateResource,
   deleteResource,
   trackDownload,
+  approveResource,
+  rejectResource,
+  viewResourceFile,
 } from "../controllers/resourceController.js";
-import { authenticate } from "../middleware/authMiddleware.js";
+import { authenticate, optionalAuth } from "../middleware/authMiddleware.js";
 import { authorize } from "../middleware/roleMiddleware.js";
 import { enforceDepartmentMatch, checkDepartmentAccess } from "../middleware/departmentMiddleware.js";
 import { uploadResourceFile, compressUploadedImages } from "../utils/fileUpload.js";
 
 const router = express.Router();
 
-router.get("/", getResources);
-router.get("/:id", getResourceById);
+router.get("/", optionalAuth, getResources);
+router.get("/:id/view", optionalAuth, viewResourceFile);
+router.get("/:id", optionalAuth, getResourceById);
 router.post(
   "/",
   authenticate,
@@ -33,6 +37,42 @@ router.put(
   uploadResourceFile.single("file"),
   compressUploadedImages,
   updateResource
+);
+router.patch(
+  "/:id/approve",
+  authenticate,
+  authorize("faculty", "teacher", "hod", "admin"),
+  approveResource
+);
+router.post(
+  "/:id/approve",
+  authenticate,
+  authorize("faculty", "teacher", "hod", "admin"),
+  approveResource
+);
+router.put(
+  "/:id/approve",
+  authenticate,
+  authorize("faculty", "teacher", "hod", "admin"),
+  approveResource
+);
+router.patch(
+  "/:id/reject",
+  authenticate,
+  authorize("faculty", "teacher", "hod", "admin"),
+  rejectResource
+);
+router.post(
+  "/:id/reject",
+  authenticate,
+  authorize("faculty", "teacher", "hod", "admin"),
+  rejectResource
+);
+router.put(
+  "/:id/reject",
+  authenticate,
+  authorize("faculty", "teacher", "hod", "admin"),
+  rejectResource
 );
 router.delete(
   "/:id",

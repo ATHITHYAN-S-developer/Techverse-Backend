@@ -1,8 +1,10 @@
 import mongoose from "mongoose";
 import { Announcement } from "../models/Announcement.js";
+import { User } from "../models/User.js";
 import { getPagination } from "../utils/pagination.js";
 import { logAuditEvent } from "../services/auditService.js";
 import { deleteUploadedFile } from "../utils/fileUpload.js";
+import { buildAnnouncementFileUrl } from "../services/announcementStorageService.js";
 
 /**
  * @route   GET /api/announcements
@@ -192,7 +194,7 @@ export async function createAnnouncement(req, res, next) {
 
     if (req.file) {
       finalImage = req.file.filename;
-      finalImageUrl = `/uploads/announcements/${req.file.filename}`;
+      finalImageUrl = buildAnnouncementFileUrl(req.file.filename, req);
     }
 
     const normalizedPriority = (priority || "normal").toLowerCase();
@@ -243,6 +245,60 @@ export async function createAnnouncement(req, res, next) {
 }
 
 /**
+ * Helper to check whether user has permission to edit or delete an announcement
+ */
+async function canManageAnnouncement(user, announcement) {
+  if (!user || !announcement) return false;
+  // Admin has universal authority
+  if (user.role === "admin") return true;
+
+  // The author can always manage/delete their own announcement
+  if (announcement.createdBy && announcement.createdBy.toString() === user._id.toString()) {
+    return true;
+  }
+
+  // Same department by ID
+  if (user.departmentId && announcement.departmentId && user.departmentId.toString() === announcement.departmentId.toString()) {
+    return true;
+  }
+
+  // Department name & code matching
+  const userDeptName = (user.departmentName || user.department || "").toLowerCase().trim();
+  const userDeptCode = (user.departmentCode || "").toLowerCase().trim();
+  const annDept = (announcement.department || "").toLowerCase().trim();
+  const annDepts = (Array.isArray(announcement.departments) ? announcement.departments : []).map((d) => d.toLowerCase().trim());
+
+  if (userDeptName && (annDept.includes(userDeptName) || annDepts.some((d) => d.includes(userDeptName)))) {
+    return true;
+  }
+  if (userDeptCode && (annDept.includes(userDeptCode) || annDepts.some((d) => d.includes(userDeptCode)))) {
+    return true;
+  }
+
+  // If announcement departmentId is missing/null, check creator's department
+  if (!announcement.departmentId && announcement.createdBy) {
+    const creator = await User.findById(announcement.createdBy).select("departmentId departmentCode department").lean();
+    if (creator) {
+      if (user.departmentId && creator.departmentId && user.departmentId.toString() === creator.departmentId.toString()) {
+        return true;
+      }
+      if (userDeptCode && creator.departmentCode && userDeptCode === creator.departmentCode.toLowerCase()) {
+        return true;
+      }
+    }
+  }
+
+  // HOD or faculty managing college-wide or all announcements
+  if (annDept === "all" || annDepts.includes("all")) {
+    if (user.role === "hod" || user.role === "faculty" || user.role === "teacher") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * @route   PUT /api/announcements/:id
  * @desc    Update announcement with optional new poster image
  * @access  Protected (Teacher / Admin)
@@ -254,16 +310,12 @@ export async function updateAnnouncement(req, res, next) {
       return res.status(404).json({ success: false, message: "Announcement not found." });
     }
 
-    // Teacher isolation check
-    if (req.user.role === "teacher") {
-      const isOwner = announcement.createdBy?.toString() === req.user._id.toString();
-      const isSameDept = announcement.departmentId?.toString() === req.user.departmentId?.toString();
-      if (!isOwner && !isSameDept) {
-        return res.status(403).json({
-          success: false,
-          message: "You can only edit announcements created within your assigned department.",
-        });
-      }
+    const hasPermission = await canManageAnnouncement(req.user, announcement);
+    if (!hasPermission) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only edit announcements within your assigned department or ones you created.",
+      });
     }
 
     const updates = { ...req.body };
@@ -331,7 +383,7 @@ export async function updateAnnouncement(req, res, next) {
         deleteUploadedFile(announcement.imageUrl || announcement.image, "announcements");
       }
       updates.image = req.file.filename;
-      updates.imageUrl = `/uploads/announcements/${req.file.filename}`;
+      updates.imageUrl = buildAnnouncementFileUrl(req.file.filename, req);
     }
 
     Object.assign(announcement, updates);
@@ -370,15 +422,12 @@ export async function deleteAnnouncement(req, res, next) {
       return res.status(404).json({ success: false, message: "Announcement not found." });
     }
 
-    if (req.user.role === "teacher") {
-      const isOwner = announcement.createdBy?.toString() === req.user._id.toString();
-      const isSameDept = announcement.departmentId?.toString() === req.user.departmentId?.toString();
-      if (!isOwner && !isSameDept) {
-        return res.status(403).json({
-          success: false,
-          message: "You can only delete announcements within your assigned department.",
-        });
-      }
+    const hasPermission = await canManageAnnouncement(req.user, announcement);
+    if (!hasPermission) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only delete announcements within your assigned department or ones you created.",
+      });
     }
 
     // Permanently remove image file from filesystem if one exists

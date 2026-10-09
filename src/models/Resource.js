@@ -115,6 +115,23 @@ const resourceSchema = new mongoose.Schema(
       default: true,
       index: true,
     },
+    approvalStatus: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "approved",
+      index: true,
+    },
+    rejectionReason: {
+      type: String,
+      default: "",
+    },
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    reviewedAt: {
+      type: Date,
+    },
   },
   {
     timestamps: true,

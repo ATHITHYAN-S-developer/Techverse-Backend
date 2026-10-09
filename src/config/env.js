@@ -18,4 +18,8 @@ export const ENV = {
   CLIENT_URL: process.env.CLIENT_URL || "http://localhost:5173",
   CODE_RUN_MAX_CONCURRENCY: parsePositiveInt(process.env.CODE_RUN_MAX_CONCURRENCY, defaultConcurrency),
   CODE_RUN_MAX_QUEUE_WAIT_MS: parsePositiveInt(process.env.CODE_RUN_MAX_QUEUE_WAIT_MS, 8000),
+  STORAGE_PORT: parsePositiveInt(process.env.STORAGE_PORT, 5001),
+  STORAGE_SERVER_URL: process.env.STORAGE_SERVER_URL || "http://localhost:5001",
+  AUTO_START_STORAGE_SERVER: process.env.AUTO_START_STORAGE_SERVER !== "false",
 };
+

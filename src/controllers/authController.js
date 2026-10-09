@@ -16,13 +16,15 @@ function generateToken(userId, role) {
  * Validate the secret a caller supplied for a given role.
  *
  * Students authenticate with their date of birth; teachers and admins use the
- * stored plain-text password. Students are matched on `dateOfBirth` only - a
- * student's stored password is not a login route, so a leaked shared roster
+ * stored password (a bcrypt hash). Students are matched on `dateOfBirth` first -
+ * a student's stored password is not a login route, so a leaked shared roster
  * password cannot be used to impersonate a student.
+ *
+ * @returns {Promise<boolean>}
  */
-function isCredentialValid(role, user, secret) {
+async function isCredentialValid(role, user, secret) {
   if (role === "student") {
-    return matchesDateOfBirth(user.dateOfBirth, secret) || user.comparePassword(secret);
+    return matchesDateOfBirth(user.dateOfBirth, secret) || (await user.comparePassword(secret));
   }
   return user.comparePassword(secret);
 }
@@ -138,7 +140,7 @@ export async function login(req, res, next) {
       });
     }
 
-    if (!isCredentialValid(role, user, secret)) {
+    if (!(await isCredentialValid(role, user, secret))) {
       const hint =
         role === "student" && !user.dateOfBirth
           ? " No date of birth is on file for this register number - please contact the administrator."
@@ -304,7 +306,7 @@ export async function changePassword(req, res, next) {
       });
     }
 
-    if (!user.comparePassword(currentPassword)) {
+    if (!(await user.comparePassword(currentPassword))) {
       return res.status(401).json({
         success: false,
         message: "Current password is incorrect.",
@@ -312,7 +314,7 @@ export async function changePassword(req, res, next) {
       });
     }
 
-    user.password = newPassword; // Plain text
+    user.password = newPassword; // hashed by the User model's pre-save hook
     await user.save();
 
     const db = mongoose.connection.db;
@@ -325,7 +327,7 @@ export async function changePassword(req, res, next) {
 
       await db.collection(targetCollName).updateOne(
         { _id: user._id },
-        { $set: { password: newPassword, updatedAt: new Date() } }
+        { $set: { password: user.password, updatedAt: new Date() } }
       );
     }
 
@@ -377,7 +379,7 @@ export async function facultyResetPassword(req, res, next) {
       });
     }
 
-    user.password = newPassword;
+    user.password = newPassword; // hashed by the User model's pre-save hook
     await user.save();
 
     const db = mongoose.connection.db;
@@ -390,7 +392,7 @@ export async function facultyResetPassword(req, res, next) {
 
       await db.collection(targetCollName).updateOne(
         { _id: user._id },
-        { $set: { password: newPassword, updatedAt: new Date() } }
+        { $set: { password: user.password, updatedAt: new Date() } }
       );
     }
 

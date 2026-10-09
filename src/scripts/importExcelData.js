@@ -16,6 +16,7 @@ import { connectDB } from "../config/db.js";
 import { User } from "../models/User.js";
 import { Department } from "../models/Department.js";
 import { Class } from "../models/Class.js";
+import { hashUpdatePasswords } from "../utils/password.js";
 import {
   DEPARTMENT_CATALOG,
   emailFromRegisterNumber,
@@ -269,6 +270,11 @@ export async function importFromExcel(filePath = DEFAULT_EXCEL_PATH) {
         },
       };
     });
+
+    // bulkWrite bypasses model middleware, so hash any plain-text passwords here.
+    await Promise.all(
+      ops.map((op) => (op.updateOne ? hashUpdatePasswords(op.updateOne.update) : null))
+    );
 
     const res = await User.bulkWrite(ops, { ordered: false });
     totalUpserted += (res.upsertedCount || 0) + (res.modifiedCount || 0) + (res.matchedCount || 0);

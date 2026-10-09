@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { hashPassword, hashUpdatePasswords, isHashed, verifyPassword } from "../utils/password.js";
 
 const pointsSchema = new mongoose.Schema(
   {
@@ -69,7 +70,6 @@ const userSchema = new mongoose.Schema(
       required: [true, "Password is required"],
       select: true,
     },
-
     // Student-specific fields
     registerNumber: {
       type: String,
@@ -217,9 +217,43 @@ userSchema.index({ "streak.currentStreak": -1 });
 userSchema.index({ role: 1, courseCode: 1 });
 userSchema.index({ role: 1, batchStartYear: 1 });
 
-// Plain-text password comparison method
+// Hash the password on every write path so plain text never reaches the
+// `users` collection.
+
+// Document saves (.create / .save()).
+userSchema.pre("save", async function () {
+  if (this.isModified("password") && this.password && !isHashed(this.password)) {
+    this.password = await hashPassword(this.password);
+  }
+});
+
+// Bulk inserts (User.insertMany in the seeders) do not run `save` middleware.
+userSchema.pre("insertMany", function (next, docs) {
+  if (!Array.isArray(docs)) return next();
+  Promise.all(
+    docs.map(async (doc) => {
+      if (doc && doc.password && !isHashed(doc.password)) {
+        doc.password = await hashPassword(doc.password);
+      }
+    })
+  )
+    .then(() => next())
+    .catch(next);
+});
+
+// Query-level writes (upserts in the import / seed scripts, admin resets).
+for (const op of ["findOneAndUpdate", "updateOne", "updateMany"]) {
+  userSchema.pre(op, async function () {
+    const update = this.getUpdate();
+    await hashUpdatePasswords(update);
+    this.setUpdate(update);
+  });
+}
+
+// Verify a supplied password against the stored bcrypt hash, falling back to a
+// legacy plain-text comparison for accounts that have not been migrated yet.
 userSchema.methods.comparePassword = function (enteredPassword) {
-  return String(enteredPassword || "") === String(this.password || "");
+  return verifyPassword(enteredPassword, this.password);
 };
 
 // Safe JSON serialization helper (strips password)

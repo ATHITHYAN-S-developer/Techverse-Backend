@@ -9,6 +9,8 @@
     "dev": "nodemon src/server.js",
     "prestart": "node scripts/check-requirements.js",
     "start": "node src/server.js",
+    "storage": "node src/storageServer.js",
+    "storage:dev": "nodemon src/storageServer.js",
     "seed": "node src/seed/seedDatabase.js",
     "seed:placement": "node src/scripts/seedPlacementEvents.js",
     "seed:tech-pulse": "node src/scripts/seedTechPulse.js",
@@ -20,11 +22,13 @@
     "seed:enrollments": "node src/scripts/seedEnrollments.js",
     "backfill": "node src/scripts/backfillGamification.js",
     "backfill:certificates": "node src/scripts/backfillCourseCertificates.js",
+    "hash:passwords": "node src/scripts/hashPasswords.js",
     "purge:technology": "node src/scripts/purgeTechnologyResources.js",
     "streak:reset": "node scripts/resetStreaks.js",
     "requirements": "node scripts/check-requirements.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "compression": "^1.8.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

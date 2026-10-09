@@ -63,7 +63,7 @@ async function run() {
   console.log("Role:", faculty.role);
   console.log("Staff ID:", faculty.staffId);
   console.log("Email:", faculty.email);
-  console.log("Password:", faculty.password);
+  console.log("Password:", "Senthamarai@123", "(stored hashed)");
   console.log("Department:", faculty.departmentName, `(${faculty.departmentCode})`);
   console.log("Department ID:", faculty.departmentId);
   console.log("IsActive:", faculty.isActive);

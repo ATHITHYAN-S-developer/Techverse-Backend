@@ -56,16 +56,16 @@ router.get("/", getCodingTests);
 router.get("/:id", getCodingTestById);
 router.get("/:id/progress", protect, getCodingProgress);
 
-// Teacher / Faculty / Admin Management Endpoints
-router.get("/admin/all", protect, authorize("admin", "teacher", "faculty"), getAllCodingTestsAdmin);
-router.post("/", protect, authorize("admin", "teacher", "faculty"), createCodingTest);
-router.put("/:id", protect, authorize("admin", "teacher", "faculty"), updateCodingTest);
-router.delete("/:id", protect, authorize("admin", "teacher", "faculty"), deleteCodingTest);
+// Teacher / Faculty / HOD / Admin Management Endpoints
+router.get("/admin/all", protect, authorize("admin", "teacher", "faculty", "hod"), getAllCodingTestsAdmin);
+router.post("/", protect, authorize("admin", "teacher", "faculty", "hod"), createCodingTest);
+router.put("/:id", protect, authorize("admin", "teacher", "faculty", "hod"), updateCodingTest);
+router.delete("/:id", protect, authorize("admin", "teacher", "faculty", "hod"), deleteCodingTest);
 
-// Problem-level CRUD for Teachers
-router.post("/:id/problems", protect, authorize("admin", "teacher", "faculty"), addProblemToTest);
-router.put("/:id/problems/:problemId", protect, authorize("admin", "teacher", "faculty"), updateProblemInTest);
-router.delete("/:id/problems/:problemId", protect, authorize("admin", "teacher", "faculty"), deleteProblemFromTest);
+// Problem-level CRUD for Teachers / HOD
+router.post("/:id/problems", protect, authorize("admin", "teacher", "faculty", "hod"), addProblemToTest);
+router.put("/:id/problems/:problemId", protect, authorize("admin", "teacher", "faculty", "hod"), updateProblemInTest);
+router.delete("/:id/problems/:problemId", protect, authorize("admin", "teacher", "faculty", "hod"), deleteProblemFromTest);
 
 // Student Code Execution & Proctoring
 router.post("/:id/run", protect, runLimiter, runCode);
