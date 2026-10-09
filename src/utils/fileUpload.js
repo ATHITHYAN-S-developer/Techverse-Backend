@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 const baseUploadDir = path.resolve(__dirname, "../../uploads");
 
 // Ensure subdirectories exist
-const subDirs = ["announcements", "courses", "resources", "placement-events"];
+const subDirs = ["announcements", "courses", "resources", "placement-events", "tech-pulse"];
 subDirs.forEach((sub) => {
   const dir = path.join(baseUploadDir, sub);
   if (!fs.existsSync(dir)) {
@@ -165,6 +165,36 @@ export const handleAnnouncementUpload = (req, res, next) => {
         if (fs.existsSync(chosen.path)) {
           chosen.size = fs.statSync(chosen.path).size;
         }
+      }
+    }
+    next();
+  });
+};
+
+export const uploadTechPulseLogo = multer({
+  storage: createDynamicStorage("tech-pulse"),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max for a feed logo
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/") || /\.(jpe?g|png|webp|gif|svg)$/i.test(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files (JPG, PNG, WebP) are allowed for Tech Pulse logos!"), false);
+    }
+  },
+});
+
+export const handleTechPulseUpload = (req, res, next) => {
+  uploadTechPulseLogo.single("logo")(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({
+        success: false,
+        message: err.message || "Tech Pulse logo upload failed.",
+      });
+    }
+    if (req.file?.path) {
+      await compressImageFile(req.file.path, { maxWidth: 512, quality: 85 });
+      if (fs.existsSync(req.file.path)) {
+        req.file.size = fs.statSync(req.file.path).size;
       }
     }
     next();
