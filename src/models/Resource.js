@@ -51,7 +51,6 @@ const resourceSchema = new mongoose.Schema(
         "syllabus",
         "website",
         "aptitude",
-        "updates",
         "youtube",
       ],
       default: "notes",

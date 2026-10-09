@@ -11,6 +11,8 @@
     "start": "node src/server.js",
     "seed": "node src/seed/seedDatabase.js",
     "seed:placement": "node src/scripts/seedPlacementEvents.js",
+    "seed:tech-pulse": "node src/scripts/seedTechPulse.js",
+    "migrate:tech-pulse": "node src/scripts/migrateTechPulse.js",
     "import:students": "node src/scripts/importStudents.js",
     "import:excel": "node src/scripts/importExcelData.js",
     "export:logins": "node src/scripts/exportLoginJson.js",
