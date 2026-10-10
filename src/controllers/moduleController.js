@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { CourseModule } from "../models/CourseModule.js";
 import { Course } from "../models/Course.js";
 import { CourseVideo } from "../models/CourseVideo.js";
@@ -9,9 +10,11 @@ import { MCQQuestion } from "../models/MCQQuestion.js";
  */
 function extractYouTubeVideoId(url) {
   if (!url) return "";
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-  const match = url.match(regExp);
-  return match && match[2].length === 11 ? match[2] : "";
+  const trimmed = String(url).trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  const regExp = /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/|live\/)([^#&?]*).*/;
+  const match = trimmed.match(regExp);
+  return match && match[2] && match[2].length === 11 ? match[2] : "";
 }
 
 /**
@@ -24,7 +27,23 @@ export async function getModules(req, res, next) {
     const { courseId } = req.query;
     const filter = {};
     if (courseId) {
-      filter.courseId = courseId;
+      if (mongoose.Types.ObjectId.isValid(courseId)) {
+        filter.courseId = courseId;
+      } else {
+        const cleanSlug = String(courseId).trim();
+        const foundCourse = await Course.findOne({
+          $or: [
+            { slug: cleanSlug },
+            { slug: cleanSlug.toLowerCase().replace(/[\s_]+/g, "-") },
+            { title: cleanSlug },
+          ],
+        });
+        if (foundCourse) {
+          filter.courseId = foundCourse._id;
+        } else {
+          return res.json({ success: true, modules: [] });
+        }
+      }
     }
     const modules = await CourseModule.find(filter)
       .populate("courseId", "title slug category instructor")

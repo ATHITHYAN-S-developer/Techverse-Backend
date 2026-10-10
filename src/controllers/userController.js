@@ -5,6 +5,7 @@ import { Resource } from "../models/Resource.js";
 import { Course } from "../models/Course.js";
 import { Department } from "../models/Department.js";
 import { getPagination } from "../utils/pagination.js";
+import { updateStreakOnActivity } from "../services/streakService.js";
 
 /**
  * @route   GET /api/users
@@ -328,6 +329,14 @@ export async function getLeaderboard(req, res, next) {
  */
 export async function getStreakInfo(req, res, next) {
   try {
+    if (req.user?.role === "student") {
+      try {
+        await updateStreakOnActivity(req.user._id);
+      } catch (streakErr) {
+        console.error("[getStreakInfo update error]:", streakErr);
+      }
+    }
+
     const user = await User.findById(req.user._id).select("streak");
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found." });

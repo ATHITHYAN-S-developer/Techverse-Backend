@@ -246,19 +246,46 @@ export async function getMyCourses(req, res, next) {
 export async function getCourseBySlug(req, res, next) {
   try {
     const { slug } = req.params;
-    const course = await Course.findOne({
-      $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
-    }).populate("departmentId", "code name");
+    if (!slug) {
+      return res.status(404).json({ success: false, message: "Course slug is required." });
+    }
 
-    if (!course || !course.isPublished) {
+    const cleanSlug = decodeURIComponent(slug).trim();
+    const hyphenatedSlug = cleanSlug.toLowerCase().replace(/[\s_]+/g, "-");
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanSlug);
+
+    const isEducatorOrAdmin =
+      req.user && ["admin", "hod", "teacher", "faculty"].includes(req.user.role);
+
+    const orConditions = [
+      { slug: cleanSlug },
+      { slug: cleanSlug.toLowerCase() },
+      { slug: hyphenatedSlug },
+      { title: new RegExp(`^${cleanSlug.replace(/[-_]/g, "[ -]?")}$`, "i") },
+    ];
+    if (isObjectId) {
+      orConditions.push({ _id: cleanSlug });
+    }
+
+    const course = await Course.findOne({ $or: orConditions })
+      .sort({ isPublished: -1, createdAt: -1 })
+      .populate("departmentId", "code name");
+
+    if (!course) {
       return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    if (!course.isPublished && !isEducatorOrAdmin) {
+      return res.status(404).json({
+        success: false,
+        message: "This course is currently in draft mode and has not been published yet.",
+        code: "COURSE_DRAFT",
+      });
     }
 
     // Role-based Audience Enforcement:
     // Educators & Admins can access all courses.
     // Students and Anonymous visitors are restricted if the course is department-only.
-    const isEducatorOrAdmin =
-      req.user && ["admin", "hod", "teacher", "faculty"].includes(req.user.role);
     const isDeptOnly = course.isDepartmentOnly || course.targetAudience === "department";
 
     if (isDeptOnly && course.departmentId && !isEducatorOrAdmin) {
@@ -287,7 +314,11 @@ export async function getCourseBySlug(req, res, next) {
       }
     }
 
-    const modules = await CourseModule.find({ courseId: course._id, isPublished: true }).sort({ moduleNumber: 1, order: 1 });
+    const moduleFilter = { courseId: course._id };
+    if (!isEducatorOrAdmin) {
+      moduleFilter.isPublished = true;
+    }
+    const modules = await CourseModule.find(moduleFilter).sort({ moduleNumber: 1, order: 1 });
 
     let enrollment = null;
     if (req.user && req.user.role === "student") {
@@ -317,7 +348,7 @@ export async function getCourseBySlug(req, res, next) {
       (modules.length > 0 && completedModuleIds.length >= modules.length);
 
     let previousCompleted = true; // Module 1 starts accessible
-    const isPrivileged = req.user && (req.user.role === "admin" || req.user.role === "teacher");
+    const isPrivileged = req.user && ["admin", "teacher", "faculty", "hod"].includes(req.user.role);
 
     const sanitizedModules = modules.map((mod, idx) => {
       const obj = mod.toObject();
@@ -335,7 +366,7 @@ export async function getCourseBySlug(req, res, next) {
       obj.isUnlocked = isUnlocked;
       obj.watchPercentage = p?.watchPercentage || (isCourseCompleted ? 100 : 0);
       obj.uniqueWatchedSeconds = p?.uniqueWatchedSeconds || 0;
-      const isVideoMandatory = Boolean(m.hasVideo && m.isVideoMandatory);
+      const isVideoMandatory = Boolean(mod.hasVideo && mod.isVideoMandatory);
       obj.videoRequirementMet = isCourseCompleted || !isVideoMandatory || Boolean(p?.videoRequirementMet);
       obj.testUnlocked = isCourseCompleted || isPrivileged || (isUnlocked && (!isVideoMandatory || Boolean(p?.testUnlocked && p?.videoRequirementMet)));
       obj.testScore = p?.testScore ?? null;

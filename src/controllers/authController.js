@@ -4,6 +4,7 @@ import { User } from "../models/User.js";
 import { ENV } from "../config/env.js";
 import { logAuditEvent } from "../services/auditService.js";
 import { matchesDateOfBirth } from "../utils/dateOfBirth.js";
+import { updateStreakOnActivity } from "../services/streakService.js";
 
 // Generates signed JWT token
 function generateToken(userId, role) {
@@ -169,6 +170,19 @@ export async function login(req, res, next) {
     user.lastLoginAt = new Date();
     await user.save();
 
+    // Advance/verify daily streak for student login
+    if (user.role === "student") {
+      try {
+        await updateStreakOnActivity(user._id);
+        const refreshedUser = await User.findById(user._id);
+        if (refreshedUser) {
+          user = refreshedUser;
+        }
+      } catch (streakErr) {
+        console.error("[Login Streak Sync Error]:", streakErr);
+      }
+    }
+
     // Generate JWT
     const token = generateToken(user._id, user.role);
 
@@ -202,6 +216,13 @@ export async function login(req, res, next) {
  */
 export async function getMe(req, res, next) {
   try {
+    if (req.user?.role === "student") {
+      try {
+        await updateStreakOnActivity(req.user._id);
+      } catch (streakErr) {
+        console.error("[getMe Streak Sync Error]:", streakErr);
+      }
+    }
     const user = await User.findById(req.user._id).populate("departmentId", "code name");
     res.json({
       success: true,

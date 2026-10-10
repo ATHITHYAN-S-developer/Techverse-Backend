@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Resource } from "../models/Resource.js";
 import { Announcement } from "../models/Announcement.js";
 import { Course } from "../models/Course.js";
@@ -305,7 +306,21 @@ export async function checkModuleCourseOwnership(req, res, next) {
       });
     }
 
-    const course = await Course.findById(courseId);
+    let course = null;
+    if (mongoose.Types.ObjectId.isValid(courseId)) {
+      course = await Course.findById(courseId);
+    }
+    if (!course) {
+      const cleanSlug = String(courseId).trim();
+      course = await Course.findOne({
+        $or: [
+          { slug: cleanSlug },
+          { slug: cleanSlug.toLowerCase().replace(/[\s_]+/g, "-") },
+          { title: cleanSlug },
+        ],
+      });
+    }
+
     if (!course) {
       return res.status(404).json({
         success: false,
@@ -314,17 +329,31 @@ export async function checkModuleCourseOwnership(req, res, next) {
       });
     }
 
+    // Attach resolved course and ensure body has the actual ObjectId
+    req.targetCourse = course;
+    if (req.body) {
+      req.body.courseId = course._id;
+    }
+
     // Admin: full access. HOD: only their own department's courses.
-    // Faculty: only courses explicitly assigned to them by the HOD/Admin.
+    // Faculty: assigned courses (by ID, by assigned name, or instructor name).
     const isSuperAdmin = req.user.role === "admin" || isDeveloper;
     const isSameDeptHod =
       isHod &&
       course.departmentId &&
       req.user.departmentId &&
       deptIdOf(course.departmentId) === deptIdOf(req.user.departmentId);
+
+    const userNameLower = String(req.user.name || "").trim().toLowerCase();
+    const assignedNameLower = String(course.assignedFacultyName || "").trim().toLowerCase();
+    const instructorLower = String(course.instructor || "").trim().toLowerCase();
+
     const isAssignedFaculty =
-      Boolean(course.assignedFacultyId) &&
-      String(course.assignedFacultyId) === String(req.user._id);
+      (Boolean(course.assignedFacultyId) && String(course.assignedFacultyId) === String(req.user._id)) ||
+      (assignedNameLower && userNameLower && assignedNameLower === userNameLower) ||
+      (instructorLower && userNameLower && instructorLower === userNameLower) ||
+      (Boolean(course.createdBy) && String(course.createdBy) === String(req.user._id)) ||
+      isSameDeptHod;
 
     if (!isSuperAdmin && !isSameDeptHod && !isAssignedFaculty) {
       return res.status(403).json({
