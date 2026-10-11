@@ -85,6 +85,7 @@ async function seedTechPulse() {
         {
           $setOnInsert: { createdBy: admin._id },
           $set: {
+            kind: item.kind || "website",
             title: item.title,
             description: item.description,
             category: item.category,
