@@ -25,6 +25,7 @@
     "migrate:tech-pulse": "node src/scripts/migrateTechPulse.js",
     "import:students": "node src/scripts/importStudents.js",
     "import:excel": "node src/scripts/importExcelData.js",
+    "update:faculty-passwords": "node src/scripts/updateFacultyPasswords.js",
     "export:logins": "node src/scripts/exportLoginJson.js",
     "seed:logins": "node src/scripts/seedLoginJson.js",
     "seed:enrollments": "node src/scripts/seedEnrollments.js",

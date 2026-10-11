@@ -14,10 +14,13 @@ import xlsx from "xlsx";
 
 import { connectDB } from "../config/db.js";
 import { User } from "../models/User.js";
+import { Student } from "../models/Student.js";
+import { Faculty } from "../models/Faculty.js";
 import { Department } from "../models/Department.js";
 import { Class } from "../models/Class.js";
 import { hashUpdatePasswords } from "../utils/password.js";
 import {
+  ALL_DEPARTMENTS,
   DEPARTMENT_CATALOG,
   emailFromRegisterNumber,
   getDepartmentColor,
@@ -61,10 +64,32 @@ function parseExcelDob(rawDob) {
   return null;
 }
 
+/**
+ * Map department headers found in the STAFFS sheet to canonical department codes.
+ */
+function mapStaffDeptHeaderToCode(header) {
+  const h = String(header || "").trim();
+  if (/MATH|PHYSIC|CHEM|ENGLISH|TAMIL|GL\.\s*ENGG|COUNCELL|S\s*&\s*H/i.test(h)) return "SH";
+  if (/CYBER/i.test(h)) return "CYS";
+  if (/AI\s*&\s*DS|DATA\s*SCIENCE/i.test(h)) return "AI&DS";
+  if (/AIML|MACHINE\s*LEARNING/i.test(h)) return "AIML";
+  if (/CSE|COMPUTER/i.test(h)) return "CSE";
+  if (/BME|BIO/i.test(h)) return "BME";
+  if (/CIVIL/i.test(h)) return "CIVIL";
+  if (/EEE|ELECTRICAL/i.test(h)) return "EEE";
+  if (/ECE|ELECTRONIC/i.test(h)) return "ECE";
+  if (/MECH/i.test(h)) return "MECH";
+  if (/MDE|MEDICAL\s*ELEC/i.test(h)) return "MDE";
+  if (/IT|INFORMATION/i.test(h)) return "IT";
+  if (/MBA|MANAGEMENT/i.test(h)) return "MBA";
+  return null;
+}
+
 async function upsertDepartments(codes) {
   const map = new Map();
+  const allCodes = new Set([...ALL_DEPARTMENTS.map((d) => d.code), ...codes]);
 
-  for (const code of codes) {
+  for (const code of allCodes) {
     const meta = getDepartmentMeta(code);
     if (!meta) continue;
 
@@ -111,7 +136,7 @@ export async function importFromExcel(filePath = DEFAULT_EXCEL_PATH) {
     throw new Error(`Excel file not found at: ${resolvedPath}`);
   }
 
-  console.log(`📊 Reading Excel file: ${resolvedPath}`);
+  console.log(`\n📊 Reading Excel file: ${resolvedPath}`);
   const workbook = xlsx.readFile(resolvedPath);
   console.log(`Sheets found: ${workbook.SheetNames.join(", ")}`);
 
@@ -230,7 +255,10 @@ export async function importFromExcel(filePath = DEFAULT_EXCEL_PATH) {
 
   for (let i = 0; i < parsedStudents.length; i += CHUNK_SIZE) {
     const chunk = parsedStudents.slice(i, i + CHUNK_SIZE);
-    const ops = chunk.map((student) => {
+    const userOps = [];
+    const studentOps = [];
+
+    for (const student of chunk) {
       const deptDoc = deptMap.get(student.courseCode);
       const classKey = `${deptDoc?._id}_${student.year}_${student.semester}_${student.section}`;
       const classDoc = classCache.get(classKey);
@@ -240,6 +268,9 @@ export async function importFromExcel(filePath = DEFAULT_EXCEL_PATH) {
         email: student.email,
         role: "student",
         departmentId: deptDoc?._id,
+        departmentCode: deptDoc?.code || student.courseCode,
+        departmentName: deptDoc?.name || student.courseName,
+        department: deptDoc?.name || student.courseName,
         classId: classDoc?._id,
         year: student.year,
         semester: student.semester,
@@ -255,7 +286,7 @@ export async function importFromExcel(filePath = DEFAULT_EXCEL_PATH) {
         setFields.dateOfBirth = student.dateOfBirth;
       }
 
-      return {
+      userOps.push({
         updateOne: {
           filter: { registerNumber: student.registerNumber },
           update: {
@@ -268,70 +299,173 @@ export async function importFromExcel(filePath = DEFAULT_EXCEL_PATH) {
           },
           upsert: true,
         },
-      };
-    });
+      });
+
+      studentOps.push({
+        updateOne: {
+          filter: { registerNumber: student.registerNumber },
+          update: {
+            $set: {
+              ...setFields,
+              registerNumber: student.registerNumber,
+            },
+            $setOnInsert: {
+              password: DEFAULT_PASSWORD,
+            },
+          },
+          upsert: true,
+        },
+      });
+    }
 
     // bulkWrite bypasses model middleware, so hash any plain-text passwords here.
     await Promise.all(
-      ops.map((op) => (op.updateOne ? hashUpdatePasswords(op.updateOne.update) : null))
+      userOps.map((op) => (op.updateOne ? hashUpdatePasswords(op.updateOne.update) : null))
     );
 
-    const res = await User.bulkWrite(ops, { ordered: false });
+    const res = await User.bulkWrite(userOps, { ordered: false });
+    try {
+      await Student.bulkWrite(studentOps, { ordered: false });
+    } catch (e) {}
+
     totalUpserted += (res.upsertedCount || 0) + (res.modifiedCount || 0) + (res.matchedCount || 0);
-    console.log(`  Processed batch ${Math.min(i + CHUNK_SIZE, parsedStudents.length)} / ${parsedStudents.length}...`);
+    console.log(`  Processed student batch ${Math.min(i + CHUNK_SIZE, parsedStudents.length)} / ${parsedStudents.length}...`);
   }
 
   console.log(`🎉 Student import complete! Total handled: ${totalUpserted}`);
 
-  // ---- 2. Parse STAFFS sheet (if any non-empty rows) ----
+  // ---- 2. Parse STAFFS sheet ----
   const staffSheet = workbook.Sheets["STAFFS"];
   if (staffSheet) {
+    console.log("👨‍🏫 Parsing STAFFS sheet...");
     const staffRows = xlsx.utils.sheet_to_json(staffSheet, { header: 1 });
-    let staffCount = 0;
-    for (let i = 1; i < staffRows.length; i++) {
+    let currentDeptCode = "SH";
+    const staffUserOps = [];
+    const facultyOps = [];
+
+    for (let i = 2; i < staffRows.length; i++) {
       const row = staffRows[i];
       if (!row || row.length === 0) continue;
-      const name = String(row[1] || "").trim();
-      const deptName = String(row[2] || "").trim();
+
+      // Check for department section header
+      if ((!row[0] || row[0] === "") && row[1]) {
+        const mapped = mapStaffDeptHeaderToCode(row[1]);
+        if (mapped) {
+          currentDeptCode = mapped;
+        }
+        continue;
+      }
+
       const staffId = String(row[3] || "").trim().toUpperCase();
-      const password = String(row[4] || "").trim() || "faculty123";
+      const name = String(row[1] || "").trim();
+      const designation = String(row[2] || "").trim();
+      const password = String(row[4] || "").trim() || "vcet@2026";
 
-      if (!staffId || !name) continue;
+      if (!staffId || !name || !staffId.startsWith("VCET")) continue;
 
-      const normDept = normalizeCourseCode(deptName) || "CSE";
-      const deptDoc = deptMap.get(normDept);
-      const isHod = staffId.includes("104") || staffId.includes("HOD") || /HOD/i.test(name);
+      const deptDoc = deptMap.get(currentDeptCode) || deptMap.get("CSE");
+      const isHod = /HOD/i.test(designation) || /HOD/i.test(name) || /Head of the Department/i.test(designation);
+      const isPrincipal = /Principal/i.test(designation) || /Principal/i.test(name);
+      const role = isHod ? "hod" : isPrincipal ? "admin" : "faculty";
 
-      await User.findOneAndUpdate(
-        { staffId },
-        {
-          $set: {
-            name,
-            email: `${staffId.toLowerCase()}@vcet.ac.in`,
-            role: isHod ? "hod" : "faculty",
-            departmentId: deptDoc?._id,
-            designation: isHod ? "Head of the Department (HOD)" : "Assistant Professor",
-            isActive: true,
+      const staffSet = {
+        name,
+        email: `${staffId.toLowerCase()}@vcet.ac.in`,
+        role,
+        departmentId: deptDoc?._id,
+        departmentCode: deptDoc?.code || currentDeptCode,
+        departmentName: deptDoc?.name || currentDeptCode,
+        department: deptDoc?.name || currentDeptCode,
+        designation: designation || (isHod ? "Head of the Department (HOD)" : "Assistant Professor"),
+        isActive: true,
+      };
+
+      staffUserOps.push({
+        updateOne: {
+          filter: { staffId },
+          update: {
+            $set: staffSet,
+            $setOnInsert: { password },
           },
-          $setOnInsert: { password },
+          upsert: true,
         },
-        { upsert: true, new: true }
-      );
-      staffCount++;
+      });
+
+      facultyOps.push({
+        updateOne: {
+          filter: { staffId },
+          update: {
+            $set: {
+              name,
+              email: `${staffId.toLowerCase()}@vcet.ac.in`,
+              role: isHod ? "faculty" : role,
+              staffId,
+              designation: designation || "Assistant Professor",
+              departmentId: deptDoc?._id,
+              isActive: true,
+            },
+            $setOnInsert: { password },
+          },
+          upsert: true,
+        },
+      });
     }
-    if (staffCount > 0) {
-      console.log(`👨‍🏫 Upserted ${staffCount} faculty/staff members from STAFFS sheet.`);
+
+    if (staffUserOps.length > 0) {
+      await Promise.all(
+        staffUserOps.map((op) => (op.updateOne ? hashUpdatePasswords(op.updateOne.update) : null))
+      );
+      await User.bulkWrite(staffUserOps, { ordered: false });
+      try {
+        await Faculty.bulkWrite(facultyOps, { ordered: false });
+      } catch (e) {}
+      console.log(`👨‍🏫 Upserted ${staffUserOps.length} faculty/staff members into database.`);
+    }
+  }
+
+  // ---- 3. Parse ADMIN sheet ----
+  const adminSheet = workbook.Sheets["ADMIN"];
+  if (adminSheet) {
+    const adminRows = xlsx.utils.sheet_to_json(adminSheet, { header: 1 });
+    for (const r of adminRows) {
+      if (r && r[0] && r[1] && String(r[0]).trim().toLowerCase() === "admin") {
+        const adminPass = String(r[1]).trim();
+        await User.findOneAndUpdate(
+          { username: "admin" },
+          {
+            $set: {
+              role: "admin",
+              username: "admin",
+              name: "VCET System Administrator",
+              email: "admin@vcet.ac.in",
+              isActive: true,
+            },
+            $setOnInsert: {
+              password: adminPass,
+            },
+          },
+          { upsert: true, new: true }
+        );
+        console.log("👑 Upserted Admin credentials from ADMIN sheet.");
+      }
     }
   }
 
   // Summary counts
   const totalStudents = await User.countDocuments({ role: "student" });
   const totalFaculty = await User.countDocuments({ role: { $in: ["faculty", "teacher", "hod"] } });
-  console.log(`\n📊 Database Totals:`);
-  console.log(`  Total Students : ${totalStudents}`);
-  console.log(`  Total Faculty  : ${totalFaculty}`);
+  const totalAdmins = await User.countDocuments({ role: "admin" });
+  const totalDepts = await Department.countDocuments({});
+  const totalClasses = await Class.countDocuments({});
 
-  return { totalStudents, totalFaculty, importedStudents: parsedStudents.length };
+  console.log(`\n📊 Database Totals:`);
+  console.log(`  Total Students   : ${totalStudents}`);
+  console.log(`  Total Faculty    : ${totalFaculty}`);
+  console.log(`  Total Admins     : ${totalAdmins}`);
+  console.log(`  Total Departments: ${totalDepts}`);
+  console.log(`  Total Classes    : ${totalClasses}`);
+
+  return { totalStudents, totalFaculty, totalAdmins };
 }
 
 // Auto-run if called directly

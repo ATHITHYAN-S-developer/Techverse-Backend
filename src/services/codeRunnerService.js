@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -42,11 +42,42 @@ function buildRunner(language, sourceCode, tmpDir) {
     return { run: { cmd: process.execPath, args: [filePath] } };
   }
 
+let cachedPythonCmd = null;
+function resolvePythonCmd() {
+  if (cachedPythonCmd) return cachedPythonCmd;
+  if (process.platform !== "win32") {
+    cachedPythonCmd = "python3";
+    return cachedPythonCmd;
+  }
+  const candidates = [
+    "python",
+    "py",
+    "python3",
+    "C:\\msys64\\ucrt64\\bin\\python.exe",
+    "C:\\msys64\\ucrt64\\bin\\python3.exe",
+  ];
+  for (const cand of candidates) {
+    try {
+      const res = spawnSync(cand, ["--version"], {
+        encoding: "utf8",
+        timeout: 4000,
+        windowsHide: true,
+        shell: true,
+      });
+      if (res.status === 0 && !res.error) {
+        cachedPythonCmd = cand;
+        return cachedPythonCmd;
+      }
+    } catch (e) {}
+  }
+  cachedPythonCmd = "python";
+  return cachedPythonCmd;
+}
+
   if (language === "python" || language === "py") {
     const filePath = path.join(tmpDir, "solution.py");
     fs.writeFileSync(filePath, sourceCode, "utf8");
-    // Try 'python' on windows or fallback
-    return { run: { cmd: process.platform === "win32" ? "python" : "python3", args: [filePath] } };
+    return { run: { cmd: resolvePythonCmd(), args: [filePath] } };
   }
 
   if (language === "c") {

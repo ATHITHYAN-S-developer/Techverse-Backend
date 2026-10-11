@@ -18,7 +18,7 @@ const RESET = "\x1b[0m";
 const REQUIRED_TOOLS = [
   { id: "node", exe: "node", label: "Node.js (server runtime)" },
   { id: "npm", probes: ["npm", "npm.cmd"], label: "npm (package manager)" },
-  { id: "python3", probes: ["python3", "python"], label: "Python 3 (Coding Arena runner)" },
+  { id: "python3", probes: ["python3", "python", "py", "C:\\msys64\\ucrt64\\bin\\python3.exe", "C:\\msys64\\ucrt64\\bin\\python.exe"], label: "Python 3 (Coding Arena runner)" },
   { id: "gcc", exe: "gcc", label: "GCC (C compiler)" },
   { id: "gpp", probes: ["g++", "gpp"], label: "G++ (C++ compiler)" },
   { id: "javac", exe: "javac", label: "JDK javac (Java compiler)" },
