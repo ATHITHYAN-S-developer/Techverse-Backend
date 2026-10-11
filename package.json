@@ -33,6 +33,7 @@
     "hash:passwords": "node src/scripts/hashPasswords.js",
     "purge:technology": "node src/scripts/purgeTechnologyResources.js",
     "streak:reset": "node scripts/resetStreaks.js",
+    "likes:reset": "node scripts/resetAnnouncementLikes.js",
     "requirements": "node scripts/check-requirements.js"
   },
   "dependencies": {
