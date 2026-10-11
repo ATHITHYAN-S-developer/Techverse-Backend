@@ -2,6 +2,7 @@ import express from "express";
 import {
   getTechPulsePosts,
   getTechPulseCount,
+  getTechPulseKindCounts,
   getTechPulseAdminPosts,
   getTechPulsePostById,
   createTechPulsePost,
@@ -16,6 +17,7 @@ const router = express.Router();
 
 router.get("/", getTechPulsePosts);
 router.get("/count", getTechPulseCount);
+router.get("/counts", getTechPulseKindCounts);
 router.get("/admin", authenticate, authorize("admin"), getTechPulseAdminPosts);
 
 router.post("/", authenticate, authorize("admin"), handleTechPulseUpload, createTechPulsePost);
