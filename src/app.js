@@ -57,6 +57,7 @@ app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
 // HTTP Request Logger Middleware
 const logFilePath = path.join(process.cwd(), "app.log");
+const logWriteStream = fs.createWriteStream(logFilePath, { flags: "a" });
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -77,13 +78,9 @@ app.use((req, res, next) => {
       `[${new Date().toLocaleTimeString()}] ${color}${method}\x1b[0m ${originalUrl} -> ${color}${status}\x1b[0m (${duration}ms)`
     );
 
-    // Append to app.log
+    // Stream-buffered non-blocking write to app.log
     const logLine = `[${timestamp}] ${method} ${originalUrl} -> ${status} (${duration}ms)\n`;
-    fs.appendFile(logFilePath, logLine, (err) => {
-      if (err) {
-        // Silently ignore or fallback
-      }
-    });
+    logWriteStream.write(logLine);
   });
   next();
 });

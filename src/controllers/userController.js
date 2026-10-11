@@ -117,7 +117,8 @@ export async function getDepartmentStats(req, res, next) {
 
     const facultyMembers = await User.find(facultyQuery)
       .select("_id name staffId designation email role profileImage")
-      .sort({ name: 1 });
+      .sort({ name: 1 })
+      .lean();
     const facultyIds = facultyMembers.map((f) => f._id);
 
     const courseQuery = {
@@ -141,14 +142,23 @@ export async function getDepartmentStats(req, res, next) {
       ],
     };
 
+    const studentQuery = { isActive: true, role: "student", ...deptFilter };
+
     const [
       studentCount,
+      loggedInStudentsCount,
       resourceCount,
       courseCount,
       recentResources,
       coursesList,
+      deptCoursesForAnalytics,
+      studentsRoster,
     ] = await Promise.all([
-      User.countDocuments({ isActive: true, role: "student", ...deptFilter }),
+      User.countDocuments(studentQuery),
+      User.countDocuments({
+        ...studentQuery,
+        lastLoginAt: { $exists: true, $ne: null },
+      }),
       Resource.countDocuments(resourceQuery),
       Course.countDocuments(courseQuery),
       Resource.find(resourceQuery)
@@ -159,7 +169,76 @@ export async function getDepartmentStats(req, res, next) {
         .populate("assignedFacultyId", "name email staffId")
         .sort({ createdAt: -1 })
         .limit(10),
+      Course.find({
+        $or: [
+          ...(mongoose.Types.ObjectId.isValid(departmentId)
+            ? [{ departmentId: new mongoose.Types.ObjectId(departmentId) }]
+            : []),
+          { createdBy: { $in: facultyIds } },
+          { assignedFacultyId: { $in: facultyIds } },
+        ],
+      })
+        .select("_id title slug category createdBy assignedFacultyId isPublished createdAt")
+        .lean(),
+      User.find(studentQuery)
+        .select("_id name registerNumber email year semester section lastLoginAt createdAt")
+        .sort({ registerNumber: 1, name: 1 })
+        .lean(),
     ]);
+
+    const remainingStudentsCount = Math.max(0, studentCount - loggedInStudentsCount);
+
+    // Map faculty with course creation status
+    const facultyAnalyticsList = facultyMembers.map((fac) => {
+      const facIdStr = String(fac._id);
+      const createdCourses = deptCoursesForAnalytics.filter(
+        (c) => c.createdBy && String(c.createdBy) === facIdStr
+      );
+      const assignedCourses = deptCoursesForAnalytics.filter(
+        (c) => c.assignedFacultyId && String(c.assignedFacultyId) === facIdStr
+      );
+      const hasCreated = createdCourses.length > 0;
+
+      return {
+        ...fac,
+        coursesCreatedCount: createdCourses.length,
+        createdCourseTitles: createdCourses.map((c) => c.title),
+        assignedCoursesCount: assignedCourses.length,
+        hasCreatedCourse: hasCreated,
+      };
+    });
+
+    const facultyWithCourseCount = facultyAnalyticsList.filter((f) => f.hasCreatedCourse).length;
+    const facultyWithoutCourseCount = Math.max(0, facultyMembers.length - facultyWithCourseCount);
+
+    const studentAnalytics = {
+      totalStudents: studentCount,
+      loggedInCount: loggedInStudentsCount,
+      remainingCount: remainingStudentsCount,
+      loginPercentage: studentCount > 0 ? Math.round((loggedInStudentsCount / studentCount) * 100) : 0,
+      students: studentsRoster.map((s) => ({
+        id: s._id,
+        name: s.name,
+        registerNumber: s.registerNumber || "—",
+        email: s.email,
+        year: s.year || "—",
+        semester: s.semester || "—",
+        section: s.section || "—",
+        hasLoggedIn: Boolean(s.lastLoginAt),
+        lastLoginAt: s.lastLoginAt || null,
+      })),
+    };
+
+    const facultyAnalytics = {
+      totalFaculty: facultyMembers.length,
+      createdCount: facultyWithCourseCount,
+      notCreatedCount: facultyWithoutCourseCount,
+      creationPercentage:
+        facultyMembers.length > 0
+          ? Math.round((facultyWithCourseCount / facultyMembers.length) * 100)
+          : 0,
+      faculty: facultyAnalyticsList,
+    };
 
     res.json({
       success: true,
@@ -181,6 +260,8 @@ export async function getDepartmentStats(req, res, next) {
       facultyList: facultyMembers,
       recentResources,
       courses: coursesList,
+      studentAnalytics,
+      facultyAnalytics,
     });
   } catch (error) {
     next(error);
@@ -206,13 +287,29 @@ export async function getFacultyStats(req, res, next) {
       departmentId = currentUser?.departmentId;
     }
 
+    let deptDoc = null;
+    if (mongoose.Types.ObjectId.isValid(departmentId)) {
+      deptDoc = await Department.findById(departmentId).select("name code");
+    }
+
     const fObjId = mongoose.Types.ObjectId.isValid(facultyId)
       ? new mongoose.Types.ObjectId(facultyId)
       : null;
 
-    const deptFilter = departmentId && mongoose.Types.ObjectId.isValid(departmentId)
-      ? { departmentId: new mongoose.Types.ObjectId(departmentId) }
-      : {};
+    const deptFilter =
+      departmentId && mongoose.Types.ObjectId.isValid(departmentId)
+        ? { departmentId: new mongoose.Types.ObjectId(departmentId) }
+        : departmentId
+        ? { $or: [{ departmentCode: departmentId }, { courseCode: departmentId }] }
+        : {};
+
+    const facultyQuery = {
+      isActive: true,
+      role: { $in: ["faculty", "teacher", "hod"] },
+      ...deptFilter,
+    };
+
+    const studentQuery = { isActive: true, role: "student", ...deptFilter };
 
     const [
       resourceCount,
@@ -220,6 +317,10 @@ export async function getFacultyStats(req, res, next) {
       studentCount,
       myRecentResources,
       myCourses,
+      facultyMembers,
+      loggedInStudentsCount,
+      deptCoursesForAnalytics,
+      studentsRoster,
     ] = await Promise.all([
       fObjId ? Resource.countDocuments({ isPublished: true, uploadedBy: fObjId }) : 0,
       fObjId
@@ -228,9 +329,7 @@ export async function getFacultyStats(req, res, next) {
             $or: [{ assignedFacultyId: fObjId }, { createdBy: fObjId }],
           })
         : 0,
-      Object.keys(deptFilter).length > 0
-        ? User.countDocuments({ isActive: true, role: "student", ...deptFilter })
-        : 0,
+      Object.keys(deptFilter).length > 0 ? User.countDocuments(studentQuery) : 0,
       fObjId
         ? Resource.find({ isPublished: true, uploadedBy: fObjId }).sort({ createdAt: -1 }).limit(6)
         : [],
@@ -240,7 +339,88 @@ export async function getFacultyStats(req, res, next) {
             $or: [{ assignedFacultyId: fObjId }, { createdBy: fObjId }],
           }).sort({ createdAt: -1 })
         : [],
+      Object.keys(deptFilter).length > 0
+        ? User.find(facultyQuery)
+            .select("_id name staffId designation email role profileImage")
+            .sort({ name: 1 })
+            .lean()
+        : [],
+      Object.keys(deptFilter).length > 0
+        ? User.countDocuments({
+            ...studentQuery,
+            lastLoginAt: { $exists: true, $ne: null },
+          })
+        : 0,
+      Object.keys(deptFilter).length > 0
+        ? Course.find({
+            $or: [
+              ...(departmentId && mongoose.Types.ObjectId.isValid(departmentId)
+                ? [{ departmentId: new mongoose.Types.ObjectId(departmentId) }]
+                : []),
+            ],
+          })
+            .select("_id title slug category createdBy assignedFacultyId isPublished createdAt")
+            .lean()
+        : [],
+      Object.keys(deptFilter).length > 0
+        ? User.find(studentQuery)
+            .select("_id name registerNumber email year semester section lastLoginAt createdAt")
+            .sort({ registerNumber: 1, name: 1 })
+            .lean()
+        : [],
     ]);
+
+    const remainingStudentsCount = Math.max(0, studentCount - loggedInStudentsCount);
+
+    const facultyAnalyticsList = facultyMembers.map((fac) => {
+      const facIdStr = String(fac._id);
+      const createdCourses = deptCoursesForAnalytics.filter(
+        (c) => c.createdBy && String(c.createdBy) === facIdStr
+      );
+      const assignedCourses = deptCoursesForAnalytics.filter(
+        (c) => c.assignedFacultyId && String(c.assignedFacultyId) === facIdStr
+      );
+      return {
+        ...fac,
+        coursesCreatedCount: createdCourses.length,
+        createdCourseTitles: createdCourses.map((c) => c.title),
+        assignedCoursesCount: assignedCourses.length,
+        hasCreatedCourse: createdCourses.length > 0,
+      };
+    });
+
+    const facultyWithCourseCount = facultyAnalyticsList.filter((f) => f.hasCreatedCourse).length;
+    const facultyWithoutCourseCount = Math.max(0, facultyMembers.length - facultyWithCourseCount);
+
+    const studentAnalytics = {
+      totalStudents: studentCount,
+      loggedInCount: loggedInStudentsCount,
+      remainingCount: remainingStudentsCount,
+      loginPercentage:
+        studentCount > 0 ? Math.round((loggedInStudentsCount / studentCount) * 100) : 0,
+      students: studentsRoster.map((s) => ({
+        id: s._id,
+        name: s.name,
+        registerNumber: s.registerNumber || "—",
+        email: s.email,
+        year: s.year || "—",
+        semester: s.semester || "—",
+        section: s.section || "—",
+        hasLoggedIn: Boolean(s.lastLoginAt),
+        lastLoginAt: s.lastLoginAt || null,
+      })),
+    };
+
+    const facultyAnalytics = {
+      totalFaculty: facultyMembers.length,
+      createdCount: facultyWithCourseCount,
+      notCreatedCount: facultyWithoutCourseCount,
+      creationPercentage:
+        facultyMembers.length > 0
+          ? Math.round((facultyWithCourseCount / facultyMembers.length) * 100)
+          : 0,
+      faculty: facultyAnalyticsList,
+    };
 
     res.json({
       success: true,
@@ -252,8 +432,15 @@ export async function getFacultyStats(req, res, next) {
         myTotalResources: resourceCount,
         myTotalCourses: courseCount,
       },
+      department: {
+        _id: departmentId,
+        name: deptDoc?.name || "",
+        code: deptDoc?.code || "",
+      },
       myRecentResources,
       myCourses,
+      studentAnalytics,
+      facultyAnalytics,
     });
   } catch (error) {
     next(error);

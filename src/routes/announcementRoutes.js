@@ -20,7 +20,7 @@ router.post("/:id/like", optionalAuth, toggleLikeAnnouncement);
 router.post(
   "/",
   authenticate,
-  authorize("teacher", "faculty", "hod", "admin"),
+  authorize("admin"),
   handleAnnouncementUpload,
   createAnnouncement
 );
@@ -28,7 +28,7 @@ router.post(
 router.put(
   "/:id",
   authenticate,
-  authorize("teacher", "faculty", "hod", "admin"),
+  authorize("admin"),
   handleAnnouncementUpload,
   updateAnnouncement
 );
@@ -36,7 +36,7 @@ router.put(
 router.delete(
   "/:id",
   authenticate,
-  authorize("teacher", "faculty", "hod", "admin"),
+  authorize("admin"),
   deleteAnnouncement
 );
 
