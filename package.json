@@ -23,6 +23,7 @@
     "seed:placement": "node src/scripts/seedPlacementEvents.js",
     "seed:tech-pulse": "node src/scripts/seedTechPulse.js",
     "migrate:tech-pulse": "node src/scripts/migrateTechPulse.js",
+    "migrate:tech-pulse-kinds": "node src/scripts/migrateTechPulseKinds.js",
     "import:students": "node src/scripts/importStudents.js",
     "import:excel": "node src/scripts/importExcelData.js",
     "update:faculty-passwords": "node src/scripts/updateFacultyPasswords.js",
@@ -34,6 +35,7 @@
     "hash:passwords": "node src/scripts/hashPasswords.js",
     "purge:technology": "node src/scripts/purgeTechnologyResources.js",
     "streak:reset": "node scripts/resetStreaks.js",
+    "likes:reset": "node scripts/resetAnnouncementLikes.js",
     "requirements": "node scripts/check-requirements.js"
   },
   "dependencies": {
