@@ -15,6 +15,7 @@ import {
   getOrCreateModuleProgress,
 } from "../services/moduleProgressionService.js";
 import { deleteUploadedFile } from "../utils/fileUpload.js";
+import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
 
 /**
  * Normalize an id reference (raw ObjectId, string, or populated object
@@ -1212,6 +1213,87 @@ export async function submitModuleTestHandler(req, res, next) {
         code: error.code || "FORBIDDEN",
       });
     }
+    next(error);
+  }
+}
+
+/**
+ * @route   POST /api/courses/:slug/modules/:moduleId/run-code
+ * @desc    Execute code for a course module coding challenge against test cases
+ * @access  Protected (Student / Authenticated)
+ */
+export async function runModuleCodeHandler(req, res, next) {
+  try {
+    const { slug, moduleId } = req.params;
+    const { problemId, language = "python", sourceCode, isSubmit = false } = req.body;
+
+    if (!sourceCode) {
+      return res.status(400).json({ success: false, message: "Source code is required." });
+    }
+
+    const course = await Course.findOne({
+      $or: [
+        { slug },
+        { slug: decodeURIComponent(slug).trim().toLowerCase() },
+        { _id: mongoose.Types.ObjectId.isValid(slug) ? slug : null },
+      ].filter(Boolean),
+    });
+
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    const isModId = mongoose.Types.ObjectId.isValid(moduleId);
+    const mod = await CourseModule.findOne({
+      courseId: course._id,
+      ...(isModId ? { _id: moduleId } : { moduleNumber: Number(moduleId) || 1 }),
+    });
+
+    if (!mod) {
+      return res.status(404).json({ success: false, message: "Module not found." });
+    }
+
+    const codingProblems = mod.codingProblems || [];
+    let problem = null;
+    if (problemId) {
+      problem = codingProblems.find((p) => String(p._id) === String(problemId));
+    }
+    if (!problem && codingProblems.length > 0) {
+      problem = codingProblems[0];
+    }
+
+    if (!problem) {
+      return res.status(404).json({ success: false, message: "Coding challenge not found in this module." });
+    }
+
+    const allCases = problem.testCases || [];
+    const testCasesToRun = isSubmit
+      ? allCases
+      : allCases.filter((tc) => !tc.isHidden).length > 0
+      ? allCases.filter((tc) => !tc.isHidden)
+      : allCases;
+
+    const formattedTestCases = testCasesToRun.map((tc) => ({
+      input: tc.input || "",
+      expectedOutput: tc.output || tc.expectedOutput || "",
+      isHidden: isSubmit ? Boolean(tc.isHidden) : false,
+    }));
+
+    const result = await runCodeAgainstTestCases(language, sourceCode, formattedTestCases);
+
+    if (result.allPassed && req.user?._id) {
+      try {
+        await updateStreakOnActivity(req.user._id);
+      } catch (e) {}
+    }
+
+    res.json({
+      success: true,
+      isSubmit: Boolean(isSubmit),
+      problemId: problem._id,
+      ...result,
+    });
+  } catch (error) {
     next(error);
   }
 }
