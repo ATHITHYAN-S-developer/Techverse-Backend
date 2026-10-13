@@ -131,7 +131,7 @@ export async function login(req, res, next) {
       ];
     }
 
-    const user = await User.findOne(query).populate("departmentId", "code name").select("+password");
+    let user = await User.findOne(query).populate("departmentId", "code name").select("+password");
 
     if (!user) {
       return res.status(401).json({

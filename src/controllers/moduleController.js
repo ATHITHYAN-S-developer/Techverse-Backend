@@ -5,6 +5,7 @@ import { CourseVideo } from "../models/CourseVideo.js";
 import { CodingProblem } from "../models/CodingProblem.js";
 import { MCQQuestion } from "../models/MCQQuestion.js";
 import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
+import { recordModuleCodingProgress } from "../services/moduleProgressionService.js";
 
 /**
  * Extract YouTube Video ID from various YouTube URL formats
@@ -492,10 +493,25 @@ export async function runModuleCodeDirect(req, res, next) {
 
     const result = await runCodeAgainstTestCases(language, sourceCode, formattedTestCases);
 
+    let completionResult = null;
+    if (result.allPassed && req.user?._id && isSubmit) {
+      try {
+        completionResult = await recordModuleCodingProgress(req.user._id, mod.courseId, mod._id, {
+          allPassed: true,
+        });
+      } catch (progErr) {
+        console.error("Failed to record module coding progress in runModuleCodeDirect:", progErr);
+      }
+    }
+
     res.json({
       success: true,
       isSubmit: Boolean(isSubmit),
       problemId: problem._id,
+      codingPassed: Boolean(result.allPassed),
+      isCompleted: Boolean(completionResult?.isCompleted),
+      certificate: completionResult?.certificate || null,
+      courseCertificate: completionResult?.courseCertificate || null,
       ...result,
     });
   } catch (error) {

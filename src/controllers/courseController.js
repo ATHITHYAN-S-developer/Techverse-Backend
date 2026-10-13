@@ -13,6 +13,7 @@ import {
   getCourseProgressionMap,
   submitModuleTest as gradeAndSubmitModuleTest,
   getOrCreateModuleProgress,
+  recordModuleCodingProgress,
 } from "../services/moduleProgressionService.js";
 import { deleteUploadedFile } from "../utils/fileUpload.js";
 import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
@@ -1281,16 +1282,31 @@ export async function runModuleCodeHandler(req, res, next) {
 
     const result = await runCodeAgainstTestCases(language, sourceCode, formattedTestCases);
 
+    let completionResult = null;
     if (result.allPassed && req.user?._id) {
       try {
         await updateStreakOnActivity(req.user._id);
       } catch (e) {}
+
+      if (isSubmit) {
+        try {
+          completionResult = await recordModuleCodingProgress(req.user._id, course._id, mod._id, {
+            allPassed: true,
+          });
+        } catch (progErr) {
+          console.error("Failed to record module coding progress:", progErr);
+        }
+      }
     }
 
     res.json({
       success: true,
       isSubmit: Boolean(isSubmit),
       problemId: problem._id,
+      codingPassed: Boolean(result.allPassed),
+      isCompleted: Boolean(completionResult?.isCompleted),
+      certificate: completionResult?.certificate || null,
+      courseCertificate: completionResult?.courseCertificate || null,
       ...result,
     });
   } catch (error) {

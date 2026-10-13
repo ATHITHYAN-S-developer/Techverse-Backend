@@ -14,9 +14,58 @@ const MIN_WATCH_PERCENTAGE = 40; // 40% unique watch requirement
 const MIN_TEST_PASS_PERCENTAGE = 50; // 50% passing score
 
 /**
+ * Helper to determine what is required and whether requirements are met for a module
+ */
+export function evaluateModuleRequirements(moduleDoc, progress) {
+  const hasVideo = Boolean(
+    moduleDoc.hasVideo ||
+    moduleDoc.videoUrl ||
+    (moduleDoc.videos && moduleDoc.videos.length > 0)
+  );
+  const hasCoding = Boolean(
+    moduleDoc.hasCoding ||
+    (moduleDoc.codingProblems && moduleDoc.codingProblems.length > 0)
+  );
+  const hasMCQ = Boolean(
+    moduleDoc.hasMCQ ||
+    (moduleDoc.mcqs && moduleDoc.mcqs.length > 0)
+  );
+
+  // Video requirement: Required if module has video AND (isVideoMandatory OR neither coding nor MCQ exists)
+  const isVideoRequired = Boolean(hasVideo && (moduleDoc.isVideoMandatory || (!hasCoding && !hasMCQ)));
+  const videoSatisfied = !isVideoRequired || Boolean(progress?.videoRequirementMet);
+
+  // Coding requirement: Required if faculty enabled coding
+  const isCodingRequired = hasCoding;
+  const codingSatisfied = !isCodingRequired || Boolean(progress?.codingPassed);
+
+  // MCQ requirement: Required if faculty enabled MCQ
+  const isMCQRequired = hasMCQ;
+  const mcqSatisfied = !isMCQRequired || Boolean(progress?.testPassed);
+
+  const isAllCompleted = Boolean(
+    progress?.status === "module_completed" ||
+    (videoSatisfied && codingSatisfied && mcqSatisfied)
+  );
+
+  return {
+    hasVideo,
+    hasCoding,
+    hasMCQ,
+    isVideoRequired,
+    isCodingRequired,
+    isMCQRequired,
+    videoSatisfied,
+    codingSatisfied,
+    mcqSatisfied,
+    isAllCompleted,
+  };
+}
+
+/**
  * Checks if the entire course has been completed by the student.
  * If completed, all limitations are removed: student can freely view any module
- * and attend any test at any time in that course.
+ * and attend any test/coding challenge at any time in that course.
  */
 export async function isCourseCompletedForStudent(studentId, courseId) {
   if (!studentId || !courseId) return false;
@@ -29,13 +78,13 @@ export async function isCourseCompletedForStudent(studentId, courseId) {
   const modules = await CourseModule.find({ courseId, isPublished: true });
   if (modules.length === 0) return false;
 
-  const passedProgressCount = await ModuleProgress.countDocuments({
+  const completedProgressCount = await ModuleProgress.countDocuments({
     studentId,
     courseId,
-    testPassed: true,
+    status: "module_completed",
   });
 
-  if (passedProgressCount >= modules.length) {
+  if (completedProgressCount >= modules.length) {
     return true;
   }
 
@@ -49,8 +98,7 @@ export async function isCourseCompletedForStudent(studentId, courseId) {
 /**
  * Checks if a module is currently unlocked and accessible for a student.
  * Module 1 is always accessible to enrolled students.
- * Module N is unlocked if Module N-1 is completed / test passed,
- * OR if the student has completed the entire course.
+ * Module N is unlocked if Module N-1 is completed (all faculty-chosen requirements satisfied).
  */
 export async function isModuleUnlockedForStudent(studentId, courseId, moduleNumber) {
   if (moduleNumber <= 1) return true;
@@ -67,12 +115,8 @@ export async function isModuleUnlockedForStudent(studentId, courseId, moduleNumb
     });
 
     if (prevProgress) {
-      const isPrevPassed = Boolean(
-        prevProgress.testPassed ||
-        prevProgress.status === "module_completed" ||
-        (prevProgress.videoRequirementMet && (!prevModule.mcqs || prevModule.mcqs.length === 0))
-      );
-      if (isPrevPassed) return true;
+      const evalPrev = evaluateModuleRequirements(prevModule, prevProgress);
+      if (evalPrev.isAllCompleted) return true;
     }
 
     const enrollment = await Enrollment.findOne({
@@ -92,9 +136,9 @@ export async function isModuleUnlockedForStudent(studentId, courseId, moduleNumb
 
   if (prevProgressByNum) {
     return Boolean(
-      prevProgressByNum.testPassed ||
       prevProgressByNum.status === "module_completed" ||
-      prevProgressByNum.videoRequirementMet
+      prevProgressByNum.testPassed ||
+      prevProgressByNum.codingPassed
     );
   }
 
@@ -123,6 +167,12 @@ export async function getOrCreateModuleProgress(studentId, courseId, moduleId) {
   const isCourseDone = await isCourseCompletedForStudent(studentId, courseId);
   const isUnlocked = isCourseDone || (await isModuleUnlockedForStudent(studentId, courseId, moduleDoc.moduleNumber));
 
+  const hasVideo = Boolean(
+    moduleDoc.hasVideo ||
+    moduleDoc.videoUrl ||
+    (moduleDoc.videos && moduleDoc.videos.length > 0)
+  );
+
   let progress = await ModuleProgress.findOne({ studentId, moduleId: moduleDoc._id });
 
   if (!progress) {
@@ -135,12 +185,17 @@ export async function getOrCreateModuleProgress(studentId, courseId, moduleId) {
       watchedSegments: [],
       videoDurationSeconds: 0,
       uniqueWatchedSeconds: 0,
-      watchPercentage: 0,
-      videoRequirementMet: isCourseDone,
-      testUnlocked: isCourseDone,
+      watchPercentage: !hasVideo ? 100 : 0,
+      videoRequirementMet: isCourseDone || !hasVideo || !moduleDoc.isVideoMandatory,
+      testUnlocked: isCourseDone || !hasVideo || !moduleDoc.isVideoMandatory,
+      testPassed: false,
+      codingPassed: false,
     });
   } else {
     if (isCourseDone) {
+      progress.videoRequirementMet = true;
+      progress.testUnlocked = true;
+    } else if (!hasVideo || !moduleDoc.isVideoMandatory) {
       progress.videoRequirementMet = true;
       progress.testUnlocked = true;
     }
@@ -154,8 +209,126 @@ export async function getOrCreateModuleProgress(studentId, courseId, moduleId) {
 }
 
 /**
+ * Finalize module completion if all requirements selected by the faculty are fulfilled:
+ * - Video watched (if video is enabled and mandatory)
+ * - Coding passed (if coding is enabled)
+ * - MCQ test passed (if MCQ is enabled)
+ */
+export async function finalizeModuleCompletionIfEligible({
+  studentId,
+  courseId,
+  moduleDoc,
+  progress,
+  scorePercentage = 100,
+}) {
+  const reqs = evaluateModuleRequirements(moduleDoc, progress);
+
+  if (!reqs.isAllCompleted) {
+    return { isCompleted: false, progress };
+  }
+
+  // Mark module fully completed
+  progress.status = "module_completed";
+  progress.completedAt = progress.completedAt || new Date();
+
+  // Create Appreciation Certificate if not already present
+  let certificate = null;
+  let existingCert = await Certificate.findOne({
+    studentId,
+    courseId,
+    moduleId: moduleDoc._id,
+    type: "module_appreciation",
+  });
+
+  const course = await Course.findById(courseId);
+  const studentUser = await User.findById(studentId);
+
+  if (!existingCert) {
+    const totalCerts = await Certificate.countDocuments();
+    const certNumber = generateCertificateNumber(`MOD${moduleDoc.moduleNumber}`, totalCerts + 1);
+    const verificationCode = `0x${Math.random().toString(16).substring(2, 10).toUpperCase()}`;
+
+    existingCert = await Certificate.create({
+      certificateNumber: certNumber,
+      studentId,
+      courseId,
+      type: "module_appreciation",
+      moduleId: moduleDoc._id,
+      moduleNumber: moduleDoc.moduleNumber,
+      moduleTitle: moduleDoc.title,
+      studentName: studentUser?.name || "VCET Engineering Scholar",
+      registerNumber: studentUser?.registerNumber || "732921104001",
+      courseName: course?.title || "Course",
+      instructorName: course?.instructorName || course?.instructor || "VCET Faculty Lead",
+      score: scorePercentage,
+      grade: scorePercentage >= 85 ? "Distinction" : scorePercentage >= 70 ? "First Class" : "Pass",
+      verificationCode,
+      status: "valid",
+      issuedAt: new Date(),
+    });
+  }
+
+  certificate = existingCert;
+  progress.certificateId = existingCert._id;
+  await progress.save();
+
+  // Update Enrollment
+  const enrollment = await Enrollment.findOneAndUpdate(
+    { studentId, courseId },
+    {
+      $addToSet: { completedModules: moduleDoc._id },
+      $set: { lastActivityAt: new Date() },
+    },
+    { upsert: true, new: true }
+  );
+
+  const totalModules = await CourseModule.countDocuments({ courseId, isPublished: true });
+  if (totalModules > 0) {
+    enrollment.progressPercentage = Math.min(
+      Math.round((enrollment.completedModules.length / totalModules) * 100),
+      100
+    );
+  }
+
+  let courseCertificate = null;
+  // If all modules are finished -> complete the course & mint certificate if enabled
+  if (totalModules > 0 && enrollment.progressPercentage >= 100 && enrollment.status !== "completed") {
+    enrollment.status = "completed";
+    enrollment.completedAt = enrollment.completedAt || new Date();
+
+    if (course?.certificateEnabled !== false) {
+      try {
+        const certResult = await issueCertificate({
+          studentId,
+          courseId,
+          score: scorePercentage,
+        });
+        courseCertificate = certResult.certificate || null;
+      } catch (certErr) {
+        console.warn("Course completion certificate issue notice:", certErr.message);
+      }
+    }
+  }
+
+  await enrollment.save();
+
+  try {
+    await updateStreakOnActivity(studentId);
+  } catch (e) {
+    console.warn("Streak update error:", e.message);
+  }
+
+  return {
+    isCompleted: true,
+    progress,
+    certificate,
+    courseCertificate,
+    enrollment,
+  };
+}
+
+/**
  * Record genuine video watch progress using discretized 5-second segments.
- * Prevents seeking/skipping cheating by only counting uniquely reported valid segments.
  */
 export async function recordVideoWatchProgress(studentId, courseId, moduleId, payload) {
   const { progress, moduleDoc, isUnlocked } = await getOrCreateModuleProgress(studentId, courseId, moduleId);
@@ -170,7 +343,6 @@ export async function recordVideoWatchProgress(studentId, courseId, moduleId, pa
   const currentTime = Number(payload.currentTime || 0);
   const playbackRate = Number(payload.playbackRate || 1);
 
-  // Validate playback rate (ignore unrealistic speeds > 3x)
   if (playbackRate < 0.25 || playbackRate > 3) {
     return {
       success: false,
@@ -181,7 +353,6 @@ export async function recordVideoWatchProgress(studentId, courseId, moduleId, pa
     };
   }
 
-  // Determine segments to add
   const incomingSegments = [];
   if (Array.isArray(payload.segments)) {
     payload.segments.forEach((s) => {
@@ -195,7 +366,6 @@ export async function recordVideoWatchProgress(studentId, courseId, moduleId, pa
     incomingSegments.push(segIdx);
   }
 
-  // Update video duration if provided and reasonable
   if (duration > 0 && (progress.videoDurationSeconds === 0 || Math.abs(progress.videoDurationSeconds - duration) > 10)) {
     progress.videoDurationSeconds = Math.round(duration);
   }
@@ -203,7 +373,6 @@ export async function recordVideoWatchProgress(studentId, courseId, moduleId, pa
   const effectiveDuration = progress.videoDurationSeconds || (duration > 0 ? Math.round(duration) : 600);
   const maxPossibleSegment = Math.ceil(effectiveDuration / SEGMENT_DURATION_SECONDS) + 2;
 
-  // Filter valid segments
   const currentSegmentsSet = new Set(progress.watchedSegments || []);
   incomingSegments.forEach((seg) => {
     if (seg >= 0 && seg <= maxPossibleSegment) {
@@ -214,7 +383,6 @@ export async function recordVideoWatchProgress(studentId, courseId, moduleId, pa
   const updatedSegments = Array.from(currentSegmentsSet).sort((a, b) => a - b);
   progress.watchedSegments = updatedSegments;
 
-  // Calculate unique watched seconds & percentage
   const uniqueSeconds = Math.min(effectiveDuration, updatedSegments.length * SEGMENT_DURATION_SECONDS);
   progress.uniqueWatchedSeconds = uniqueSeconds;
 
@@ -225,7 +393,7 @@ export async function recordVideoWatchProgress(studentId, courseId, moduleId, pa
   progress.watchPercentage = percentage;
   progress.lastWatchedAt = new Date();
 
-  // Check 40% watch requirement threshold
+  // 40% watch threshold
   if (percentage >= MIN_WATCH_PERCENTAGE) {
     progress.videoRequirementMet = true;
     progress.testUnlocked = true;
@@ -236,7 +404,15 @@ export async function recordVideoWatchProgress(studentId, courseId, moduleId, pa
 
   await progress.save();
 
-  // Also ensure enrollment exists
+  // If this module ONLY has video (no coding and no MCQ), reaching watch threshold completes the module!
+  const completionResult = await finalizeModuleCompletionIfEligible({
+    studentId,
+    courseId,
+    moduleDoc,
+    progress,
+    scorePercentage: 100,
+  });
+
   await Enrollment.findOneAndUpdate(
     { studentId, courseId },
     { $set: { status: "in_progress", lastActivityAt: new Date() } },
@@ -254,103 +430,50 @@ export async function recordVideoWatchProgress(studentId, courseId, moduleId, pa
     videoRequirementMet: progress.videoRequirementMet,
     testUnlocked: progress.testUnlocked,
     status: progress.status,
+    isCompleted: Boolean(completionResult?.isCompleted),
+    certificate: completionResult?.certificate || null,
   };
 }
 
 /**
- * Get comprehensive progression map for all modules in a course for a student
+ * Record coding challenge progress when a student runs/submits their code
  */
-export async function getCourseProgressionMap(studentId, courseId) {
-  const course = await Course.findById(courseId) || await Course.findOne({ slug: courseId });
-  if (!course) throw new Error("Course not found.");
+export async function recordModuleCodingProgress(studentId, courseId, moduleId, payload = {}) {
+  const { progress, moduleDoc, isUnlocked } = await getOrCreateModuleProgress(studentId, courseId, moduleId);
 
-  const isCourseDone = await isCourseCompletedForStudent(studentId, course._id);
-  const modules = await CourseModule.find({ courseId: course._id, isPublished: true }).sort({ moduleNumber: 1, order: 1 });
-  const progresses = await ModuleProgress.find({ studentId, courseId: course._id });
-  const certificates = await Certificate.find({ studentId, courseId: course._id });
+  progress.codingAttemptsCount = (progress.codingAttemptsCount || 0) + 1;
 
-  const progressMap = new Map();
-  progresses.forEach((p) => {
-    progressMap.set(p.moduleId.toString(), p);
-  });
+  if (payload.allPassed) {
+    progress.codingPassed = true;
+    progress.codingCompletedAt = new Date();
+  }
 
-  const certMap = new Map();
-  certificates.forEach((c) => {
-    if (c.moduleId) certMap.set(c.moduleId.toString(), c);
-  });
+  await progress.save();
 
-  let previousModuleCompleted = true; // Module 1 starts accessible
-
-  const moduleProgression = modules.map((m, index) => {
-    const mIdStr = m._id.toString();
-    const p = progressMap.get(mIdStr);
-    const cert = certMap.get(mIdStr);
-
-    const isPassed = Boolean(p?.testPassed);
-    const isUnlocked = isCourseDone || previousModuleCompleted;
-
-    // Next module is accessible if current module is passed
-    previousModuleCompleted = isPassed;
-
-    let computedStatus = "video_locked";
-    if (!isUnlocked) {
-      computedStatus = "video_locked";
-    } else if (isPassed) {
-      computedStatus = cert ? "module_completed" : "test_passed";
-    } else if (p?.videoRequirementMet || isCourseDone) {
-      computedStatus = p?.testScore !== null && p?.testScore !== undefined ? "test_failed" : "test_unlocked";
-    } else if (isUnlocked) {
-      computedStatus = "video_in_progress";
-    }
-
-    const isVideoMandatory = Boolean(m.hasVideo && m.isVideoMandatory);
-    const videoReqMet = isCourseDone || !isVideoMandatory || Boolean(p?.videoRequirementMet);
-    const testUnlocked = isCourseDone || (!isVideoMandatory && isUnlocked) || Boolean(p?.testUnlocked && isUnlocked) || Boolean(p?.videoRequirementMet);
-
-    return {
-      moduleId: m._id,
-      moduleNumber: m.moduleNumber || index + 1,
-      title: m.title,
-      description: m.description,
-      videoUrl: m.videoUrl,
-      isUnlocked,
-      status: p?.status || computedStatus,
-      watchPercentage: p?.watchPercentage || (isCourseDone ? 100 : 0),
-      uniqueWatchedSeconds: p?.uniqueWatchedSeconds || 0,
-      videoDurationSeconds: p?.videoDurationSeconds || 0,
-      videoRequirementMet: videoReqMet,
-      testUnlocked: testUnlocked,
-      testScore: p?.testScore ?? null,
-      testPassed: isPassed,
-      testAttemptsCount: p?.testAttemptsCount || 0,
-      certificate: cert ? {
-        id: cert._id,
-        certificateNumber: cert.certificateNumber,
-        score: cert.score,
-        issuedAt: cert.issuedAt,
-        verificationCode: cert.verificationCode,
-      } : null,
-    };
-  });
-
-  const completedCount = moduleProgression.filter((m) => m.testPassed).length;
-  const overallProgress = modules.length > 0 ? Math.round((completedCount / modules.length) * 100) : 0;
+  let completionResult = { isCompleted: false };
+  if (progress.codingPassed) {
+    completionResult = await finalizeModuleCompletionIfEligible({
+      studentId,
+      courseId,
+      moduleDoc,
+      progress,
+      scorePercentage: 100,
+    });
+  }
 
   return {
-    courseId: course._id,
-    courseTitle: course.title,
-    courseSlug: course.slug,
-    totalModules: modules.length,
-    completedModulesCount: completedCount,
-    overallProgress,
-    isCourseCompleted: isCourseDone || overallProgress >= 100,
-    modules: moduleProgression,
+    success: true,
+    codingPassed: progress.codingPassed,
+    isCompleted: Boolean(completionResult.isCompleted || progress.status === "module_completed"),
+    status: progress.status,
+    certificate: completionResult.certificate || null,
+    courseCertificate: completionResult.courseCertificate || null,
   };
 }
 
 /**
- * Grade module test submitted by student, verify 40% watch requirement (bypassed if course is completed),
- * and if score >= 50%, generate Appreciation Certificate and unlock next module.
+ * Grade module test submitted by student.
+ * If score >= 50% and coding (if enabled) is also passed, completes module and issues appreciation certificate.
  */
 export async function submitModuleTest(studentId, courseId, moduleId, payload) {
   const { progress, moduleDoc, isUnlocked, isCourseDone } = await getOrCreateModuleProgress(studentId, courseId, moduleId);
@@ -361,10 +484,17 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     throw err;
   }
 
-  // 1. Server-Side Guard: Verify video watch requirement (Only if module hasVideo AND isVideoMandatory is true)
+  // Verify video watch requirement only if module has video AND video is mandatory
   const isVideoMandatory = Boolean(moduleDoc.hasVideo && moduleDoc.isVideoMandatory);
-  if (isVideoMandatory && !isCourseDone && !progress.testPassed && (!progress.videoRequirementMet || progress.watchPercentage < MIN_WATCH_PERCENTAGE)) {
-    const err = new Error(`Test Locked: You must watch at least ${MIN_WATCH_PERCENTAGE}% of the tutorial video before taking the test (Current: ${progress.watchPercentage}%).`);
+  if (
+    isVideoMandatory &&
+    !isCourseDone &&
+    !progress.testPassed &&
+    (!progress.videoRequirementMet || progress.watchPercentage < MIN_WATCH_PERCENTAGE)
+  ) {
+    const err = new Error(
+      `Test Locked: You must watch at least ${MIN_WATCH_PERCENTAGE}% of the tutorial video before taking the test (Current: ${progress.watchPercentage}%).`
+    );
     err.status = 403;
     err.code = "VIDEO_WATCH_REQUIREMENT_NOT_MET";
     throw err;
@@ -377,7 +507,6 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     throw new Error("This module does not contain test questions.");
   }
 
-  // 2. Grade each question securely on the server
   let correctCount = 0;
   const gradedQuestions = mcqs.map((q, idx) => {
     const userSelected = userAnswersRaw[idx] ?? userAnswersRaw[String(idx)] ?? userAnswersRaw[q._id?.toString()];
@@ -389,8 +518,9 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
       if (typeof userSelected === "number") {
         isCorrect = userSelected === correctIdx;
       } else if (typeof userSelected === "string" && q.options) {
-        isCorrect = q.options[Number(userSelected)]?.trim().toLowerCase() === correctText.trim().toLowerCase()
-          || userSelected.trim().toLowerCase() === correctText.trim().toLowerCase();
+        isCorrect =
+          q.options[Number(userSelected)]?.trim().toLowerCase() === correctText.trim().toLowerCase() ||
+          userSelected.trim().toLowerCase() === correctText.trim().toLowerCase();
       }
     }
 
@@ -421,110 +551,22 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
   progress.testPassed = passed;
   progress.testCompletedAt = new Date();
 
-  const studentUser = await User.findById(studentId);
-
-  let certificate = null;
-  let courseCertificate = null;
+  let completionResult = { isCompleted: false };
 
   if (passed) {
-    // 3. Mark module completed
-    progress.status = "module_completed";
-    progress.completedAt = new Date();
-
-    // 4. Automatically generate Appreciation Certificate if not already generated
-    let existingCert = await Certificate.findOne({
+    completionResult = await finalizeModuleCompletionIfEligible({
       studentId,
       courseId,
-      moduleId: moduleDoc._id,
-      type: "module_appreciation",
+      moduleDoc,
+      progress,
+      scorePercentage,
     });
 
-    if (!existingCert) {
-      const totalCerts = await Certificate.countDocuments();
-      const certNumber = generateCertificateNumber(`MOD${moduleDoc.moduleNumber}`, totalCerts + 1);
-      const verificationCode = `0x${Math.random().toString(16).substring(2, 10).toUpperCase()}`;
-
-      existingCert = await Certificate.create({
-        certificateNumber: certNumber,
-        studentId,
-        courseId,
-        type: "module_appreciation",
-        moduleId: moduleDoc._id,
-        moduleNumber: moduleDoc.moduleNumber,
-        moduleTitle: moduleDoc.title,
-        studentName: studentUser?.name || "VCET Engineering Scholar",
-        registerNumber: studentUser?.registerNumber || "732921104001",
-        courseName: course?.title || "Course",
-        instructorName: course?.instructorName || course?.instructor || "VCET Faculty Lead",
-        score: scorePercentage,
-        grade: scorePercentage >= 85 ? "Distinction" : scorePercentage >= 70 ? "First Class" : "Pass",
-        verificationCode,
-        status: "valid",
-        issuedAt: new Date(),
-      });
-    }
-
-    certificate = existingCert;
-    progress.certificateId = existingCert._id;
-
-    // 5. Update Enrollment
-    const enrollment = await Enrollment.findOneAndUpdate(
-      { studentId, courseId },
-      {
-        $addToSet: { completedModules: moduleDoc._id },
-        $set: { lastActivityAt: new Date() },
-      },
-      { upsert: true, new: true }
-    );
-
-    // 5a. Recompute progress against the published module count. Without this the
-    //     enrollment stays at its previous percentage and a finished course is
-    //     never recognised as complete.
-    const totalModules = await CourseModule.countDocuments({ courseId, isPublished: true });
-    if (totalModules > 0) {
-      enrollment.progressPercentage = Math.min(
-        Math.round((enrollment.completedModules.length / totalModules) * 100),
-        100
-      );
-    }
-
-    // 5b. Final module passed -> issue the course completion certificate. This is
-    //     the path students actually take, so the course cert has to be minted
-    //     here too, not only from the standalone mark-complete endpoint.
-    //     The certificate is only issued if the course has certificateEnabled = true.
-    if (totalModules > 0 && enrollment.progressPercentage >= 100 && enrollment.status !== "completed") {
-      enrollment.status = "completed";
-      enrollment.completedAt = enrollment.completedAt || new Date();
-
-      // Only issue certificate if the HOD/Admin enabled it for this course
-      if (course?.certificateEnabled !== false) {
-        try {
-          const result = await issueCertificate({
-            studentId,
-            courseId,
-            score: scorePercentage,
-          });
-          courseCertificate = result.certificate || null;
-        } catch (certErr) {
-          console.warn("Course completion certificate issue notice:", certErr.message);
-        }
-      } else {
-        console.info(`Certificate skipped for course '${course?.title}': certificateEnabled=false`);
-      }
-    } else {
-      enrollment.progressPercentage = enrollment.progressPercentage || 0;
-    }
-
-    await enrollment.save();
-
-    // A passed module test is real study activity, so it advances the streak too.
-    try {
-      await updateStreakOnActivity(studentId);
-    } catch (e) {
-      console.warn("Streak update error:", e.message);
+    if (!completionResult.isCompleted) {
+      // Test passed, but other required components (e.g. coding) are still pending
+      progress.status = "test_passed";
     }
   } else {
-    // Test Failed (< 50%) -> Next module stays locked, allow retry
     progress.status = "test_failed";
   }
 
@@ -537,34 +579,156 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     scorePercentage,
     passingScorePercentage: requiredPassPercentage,
     passed,
+    isCompleted: Boolean(completionResult.isCompleted || progress.status === "module_completed"),
     status: progress.status,
     attemptNumber: progress.testAttemptsCount,
     questions: gradedQuestions,
-    courseCertificate: courseCertificate
+    courseCertificate: completionResult.courseCertificate
       ? {
-          _id: courseCertificate._id,
-          certificateNumber: courseCertificate.certificateNumber,
-          studentName: courseCertificate.studentName,
-          registerNumber: courseCertificate.registerNumber,
-          courseName: courseCertificate.courseName,
-          score: courseCertificate.score,
-          grade: courseCertificate.grade,
-          issuedAt: courseCertificate.issuedAt,
-          verificationCode: courseCertificate.verificationCode,
+          _id: completionResult.courseCertificate._id,
+          certificateNumber: completionResult.courseCertificate.certificateNumber,
+          studentName: completionResult.courseCertificate.studentName,
+          registerNumber: completionResult.courseCertificate.registerNumber,
+          courseName: completionResult.courseCertificate.courseName,
+          score: completionResult.courseCertificate.score,
+          grade: completionResult.courseCertificate.grade,
+          issuedAt: completionResult.courseCertificate.issuedAt,
+          verificationCode: completionResult.courseCertificate.verificationCode,
         }
       : null,
-    certificate: certificate ? {
-      _id: certificate._id,
-      certificateNumber: certificate.certificateNumber,
-      studentName: certificate.studentName,
-      registerNumber: certificate.registerNumber,
-      courseName: certificate.courseName,
-      moduleNumber: certificate.moduleNumber,
-      moduleTitle: certificate.moduleTitle,
-      score: certificate.score,
-      grade: certificate.grade,
-      issuedAt: certificate.issuedAt,
-      verificationCode: certificate.verificationCode,
-    } : null,
+    certificate: completionResult.certificate
+      ? {
+          _id: completionResult.certificate._id,
+          certificateNumber: completionResult.certificate.certificateNumber,
+          studentName: completionResult.certificate.studentName,
+          registerNumber: completionResult.certificate.registerNumber,
+          courseName: completionResult.certificate.courseName,
+          moduleNumber: completionResult.certificate.moduleNumber,
+          moduleTitle: completionResult.certificate.moduleTitle,
+          score: completionResult.certificate.score,
+          grade: completionResult.certificate.grade,
+          issuedAt: completionResult.certificate.issuedAt,
+          verificationCode: completionResult.certificate.verificationCode,
+        }
+      : null,
+  };
+}
+
+/**
+ * Get comprehensive progression map for all modules in a course for a student
+ */
+export async function getCourseProgressionMap(studentId, courseId) {
+  const course = (await Course.findById(courseId)) || (await Course.findOne({ slug: courseId }));
+  if (!course) throw new Error("Course not found.");
+
+  const isCourseDone = await isCourseCompletedForStudent(studentId, course._id);
+  const modules = await CourseModule.find({ courseId: course._id, isPublished: true }).sort({
+    moduleNumber: 1,
+    order: 1,
+  });
+  const progresses = await ModuleProgress.find({ studentId, courseId: course._id });
+  const certificates = await Certificate.find({ studentId, courseId: course._id });
+
+  const progressMap = new Map();
+  progresses.forEach((p) => {
+    progressMap.set(p.moduleId.toString(), p);
+  });
+
+  const certMap = new Map();
+  certificates.forEach((c) => {
+    if (c.moduleId) certMap.set(c.moduleId.toString(), c);
+  });
+
+  let previousModuleCompleted = true; // Module 1 starts accessible
+
+  const moduleProgression = modules.map((m, index) => {
+    const mIdStr = m._id.toString();
+    const p = progressMap.get(mIdStr);
+    const cert = certMap.get(mIdStr);
+
+    const hasVideo = Boolean(m.hasVideo || m.videoUrl || (m.videos && m.videos.length > 0));
+    const hasCoding = Boolean(m.hasCoding || (m.codingProblems && m.codingProblems.length > 0));
+    const hasMCQ = Boolean(m.hasMCQ || (m.mcqs && m.mcqs.length > 0));
+
+    const reqVideo = hasVideo && (m.isVideoMandatory || (!hasCoding && !hasMCQ));
+    const reqCoding = hasCoding;
+    const reqMCQ = hasMCQ;
+
+    const videoDone = isCourseDone || !reqVideo || Boolean(p?.videoRequirementMet);
+    const codingDone = isCourseDone || !reqCoding || Boolean(p?.codingPassed);
+    const mcqDone = isCourseDone || !reqMCQ || Boolean(p?.testPassed);
+
+    const isModuleFinished = Boolean(
+      p?.status === "module_completed" ||
+      (videoDone && codingDone && mcqDone)
+    );
+
+    const isUnlocked = isCourseDone || previousModuleCompleted;
+    previousModuleCompleted = isModuleFinished;
+
+    let computedStatus = "video_locked";
+    if (!isUnlocked) {
+      computedStatus = "video_locked";
+    } else if (isModuleFinished) {
+      computedStatus = cert ? "module_completed" : "test_passed";
+    } else if (p?.testPassed) {
+      computedStatus = "test_passed";
+    } else if (p?.codingPassed) {
+      computedStatus = "coding_passed";
+    } else if (videoDone) {
+      computedStatus = p?.testScore !== null && p?.testScore !== undefined ? "test_failed" : "test_unlocked";
+    } else if (isUnlocked) {
+      computedStatus = "video_in_progress";
+    }
+
+    const testUnlocked = isUnlocked && (!reqVideo || videoDone);
+
+    return {
+      moduleId: m._id,
+      moduleNumber: m.moduleNumber || index + 1,
+      title: m.title,
+      description: m.description,
+      videoUrl: m.videoUrl,
+      hasVideo,
+      hasCoding,
+      hasMCQ,
+      isVideoMandatory: Boolean(m.isVideoMandatory),
+      isUnlocked,
+      status: p?.status === "module_completed" ? "module_completed" : computedStatus,
+      isCompleted: isModuleFinished,
+      watchPercentage: p?.watchPercentage || (isCourseDone ? 100 : 0),
+      uniqueWatchedSeconds: p?.uniqueWatchedSeconds || 0,
+      videoDurationSeconds: p?.videoDurationSeconds || 0,
+      videoRequirementMet: videoDone,
+      testUnlocked: testUnlocked,
+      testScore: p?.testScore ?? null,
+      testPassed: Boolean(p?.testPassed),
+      codingPassed: Boolean(p?.codingPassed),
+      testAttemptsCount: p?.testAttemptsCount || 0,
+      codingAttemptsCount: p?.codingAttemptsCount || 0,
+      certificate: cert
+        ? {
+            id: cert._id,
+            certificateNumber: cert.certificateNumber,
+            score: cert.score,
+            issuedAt: cert.issuedAt,
+            verificationCode: cert.verificationCode,
+          }
+        : null,
+    };
+  });
+
+  const completedCount = moduleProgression.filter((m) => m.isCompleted).length;
+  const overallProgress = modules.length > 0 ? Math.round((completedCount / modules.length) * 100) : 0;
+
+  return {
+    courseId: course._id,
+    courseTitle: course.title,
+    courseSlug: course.slug,
+    totalModules: modules.length,
+    completedModulesCount: completedCount,
+    overallProgress,
+    isCourseCompleted: isCourseDone || overallProgress >= 100,
+    modules: moduleProgression,
   };
 }

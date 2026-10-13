@@ -79,6 +79,18 @@ const moduleProgressSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    codingPassed: {
+      type: Boolean,
+      default: false,
+    },
+    codingCompletedAt: {
+      type: Date,
+      default: null,
+    },
+    codingAttemptsCount: {
+      type: Number,
+      default: 0,
+    },
     userAnswers: [
       {
         questionIndex: Number,
