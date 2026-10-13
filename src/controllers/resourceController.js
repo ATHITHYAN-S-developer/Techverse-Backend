@@ -5,8 +5,9 @@ import { Department } from "../models/Department.js";
 import { Subject } from "../models/Subject.js";
 import { getPagination } from "../utils/pagination.js";
 import { logAuditEvent } from "../services/auditService.js";
+import { ENV } from "../config/env.js";
 
-const UPLOADS_ROOT = path.join(process.cwd(), "uploads", "resources");
+const UPLOADS_ROOT = path.join(ENV.STORAGE_PATH, "resources");
 
 /**
  * @route   GET /api/resources
@@ -208,7 +209,8 @@ export async function viewResourceFile(req, res, next) {
 
     // Direct /uploads/... fallback
     if (resource.fileUrl && resource.fileUrl.startsWith("/uploads/")) {
-      const cleanPath = path.join(process.cwd(), resource.fileUrl);
+      const cleanRel = resource.fileUrl.replace(/^\/uploads\//, "");
+      const cleanPath = path.join(ENV.STORAGE_PATH, cleanRel);
       if (fs.existsSync(cleanPath)) {
         res.setHeader("Content-Type", resource.mimeType || resource.fileType || "application/pdf");
         res.setHeader(

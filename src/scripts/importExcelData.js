@@ -356,7 +356,10 @@ export async function importFromExcel(filePath = DEFAULT_EXCEL_PATH) {
         continue;
       }
 
-      const staffId = String(row[3] || "").trim().toUpperCase();
+      let staffId = String(row[3] || "").trim().toUpperCase();
+      if (staffId.startsWith("VCETMEDE")) {
+        staffId = staffId.replace("VCETMEDE", "VCETMDE");
+      }
       const name = String(row[1] || "").trim();
       const designation = String(row[2] || "").trim();
       const password = String(row[4] || "").trim() || "vcet@2026";

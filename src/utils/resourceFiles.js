@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { ENV } from "../config/env.js";
 
-const UPLOADS_ROOT = path.join(process.cwd(), "uploads", "resources");
+const UPLOADS_ROOT = path.join(ENV.STORAGE_PATH, "resources");
 
 /**
  * Best-effort removal of stored resource files from disk.

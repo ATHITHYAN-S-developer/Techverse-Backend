@@ -3,12 +3,13 @@ import path from "path";
 import multer from "multer";
 import sharp from "sharp";
 import { fileURLToPath } from "url";
+import { ENV } from "../config/env.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Base upload directory - always resolves accurately to the project's uploads folder
-const baseUploadDir = path.resolve(__dirname, "../../uploads");
+// Base upload directory - points to external storage space (D:\TechVerse Storage)
+export const baseUploadDir = path.resolve(ENV.STORAGE_PATH || "D:\\TechVerse Storage");
 
 // Ensure subdirectories exist
 const subDirs = ["announcements", "courses", "resources", "placement-events", "tech-pulse"];

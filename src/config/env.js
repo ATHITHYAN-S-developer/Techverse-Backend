@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import os from "os";
+import path from "path";
 dotenv.config();
 
 const parsePositiveInt = (value, fallback) => {
@@ -21,5 +22,6 @@ export const ENV = {
   STORAGE_PORT: parsePositiveInt(process.env.STORAGE_PORT, 5001),
   STORAGE_SERVER_URL: process.env.STORAGE_SERVER_URL || "http://localhost:5001",
   AUTO_START_STORAGE_SERVER: process.env.AUTO_START_STORAGE_SERVER !== "false",
+  STORAGE_PATH: path.resolve(process.env.STORAGE_PATH || "D:\\TechVerse Storage"),
 };
 

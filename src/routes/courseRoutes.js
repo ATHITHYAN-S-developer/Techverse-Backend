@@ -69,19 +69,19 @@ router.post(
 router.patch(
   "/:id/publish-status",
   authenticate,
-  authorize("hod", "admin"),
+  authorize("faculty", "teacher", "hod", "admin"),
   togglePublishStatus
 );
 router.put(
   "/:id/publish-status",
   authenticate,
-  authorize("hod", "admin"),
+  authorize("faculty", "teacher", "hod", "admin"),
   togglePublishStatus
 );
 router.post(
   "/:id/publish-status",
   authenticate,
-  authorize("hod", "admin"),
+  authorize("faculty", "teacher", "hod", "admin"),
   togglePublishStatus
 );
 

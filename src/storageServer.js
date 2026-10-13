@@ -8,14 +8,15 @@ import multer from "multer";
 import sharp from "sharp";
 import compression from "compression";
 import dotenv from "dotenv";
+import { ENV } from "./config/env.js";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Base upload directory for announcements
-const BASE_UPLOADS_DIR = path.resolve(__dirname, "../uploads");
+// Base upload directory for storage (points to external D:\TechVerse Storage)
+const BASE_UPLOADS_DIR = path.resolve(ENV.STORAGE_PATH || process.env.STORAGE_PATH || "D:\\TechVerse Storage");
 const ANNOUNCEMENTS_DIR = path.join(BASE_UPLOADS_DIR, "announcements");
 
 // Ensure directory exists

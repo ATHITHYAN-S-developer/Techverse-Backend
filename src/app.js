@@ -5,6 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 
 import compression from "compression";
+import { ENV } from "./config/env.js";
 
 // Ensure User model is registered before any route handlers execute
 import "./models/User.js";
@@ -85,8 +86,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Static uploads serving
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+// Static uploads serving (served directly from external storage: D:\TechVerse Storage)
+app.use("/uploads", express.static(ENV.STORAGE_PATH));
 
 // System Health Check
 app.get("/api/health", (req, res) => {
