@@ -3,6 +3,7 @@ import app from "./app.js";
 import { connectDB } from "./config/db.js";
 import { ENV } from "./config/env.js";
 import { startStorageServer } from "./storageServer.js";
+import { startAutoBackupService, stopAutoBackupService } from "./services/autoBackupService.js";
 
 async function startServer() {
   try {
@@ -49,8 +50,14 @@ async function startServer() {
       storageServerInstance = startStorageServer(ENV.STORAGE_PORT);
     }
 
+    // Auto-start real-time & periodic backup synchronization
+    if (ENV.AUTO_BACKUP_ENABLED) {
+      startAutoBackupService();
+    }
+
     const shutdown = (signal) => {
       console.log(`🛑 Received ${signal}, initiating graceful shutdown...`);
+      stopAutoBackupService();
       if (storageServerInstance) {
         try {
           storageServerInstance.close();

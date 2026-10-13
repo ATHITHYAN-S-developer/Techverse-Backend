@@ -34,6 +34,7 @@ import visitorRoutes from "./routes/visitorRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import trainingRoutes from "./routes/trainingRoutes.js";
+import backupRoutes from "./routes/backupRoutes.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -121,6 +122,7 @@ app.use("/api/visitors", visitorRoutes);
 app.use("/api/audit-logs", auditRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/training", trainingRoutes);
+app.use("/api/backup", backupRoutes);
 
 // Serve Frontend Static Bundle for Combined Single Link Access
 const frontendDistPaths = [

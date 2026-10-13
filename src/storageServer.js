@@ -15,8 +15,8 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Base upload directory for storage (points to external D:\TechVerse Storage)
-const BASE_UPLOADS_DIR = path.resolve(ENV.STORAGE_PATH || process.env.STORAGE_PATH || "D:\\TechVerse Storage");
+// Base upload directory for storage (supports dynamic backup path or default D:\TechVerse Storage)
+const BASE_UPLOADS_DIR = path.resolve(process.env.STORAGE_PATH || ENV.STORAGE_PATH || "D:\\TechVerse Storage");
 const ANNOUNCEMENTS_DIR = path.join(BASE_UPLOADS_DIR, "announcements");
 
 // Ensure directory exists

@@ -23,5 +23,10 @@ export const ENV = {
   STORAGE_SERVER_URL: process.env.STORAGE_SERVER_URL || "http://localhost:5001",
   AUTO_START_STORAGE_SERVER: process.env.AUTO_START_STORAGE_SERVER !== "false",
   STORAGE_PATH: path.resolve(process.env.STORAGE_PATH || "D:\\TechVerse Storage"),
+  AUTO_BACKUP_ENABLED: process.env.AUTO_BACKUP_ENABLED !== "false",
+  AUTO_BACKUP_INTERVAL_MINUTES: parsePositiveInt(process.env.AUTO_BACKUP_INTERVAL_MINUTES, 15),
+  BACKUP_STORAGE_PATH: path.resolve(process.env.BACKUP_STORAGE_PATH || "E:\\Techverse Storage backup"),
+  BACKUP_MONGO_PORT: parsePositiveInt(process.env.BACKUP_MONGO_PORT, 27018),
+  BACKUP_MONGO_URI: process.env.BACKUP_MONGO_URI || `mongodb://127.0.0.1:${process.env.BACKUP_MONGO_PORT || 27018}/techverse`,
 };
 
