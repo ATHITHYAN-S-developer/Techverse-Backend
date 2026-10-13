@@ -4,6 +4,7 @@ import { Course } from "../models/Course.js";
 import { CourseVideo } from "../models/CourseVideo.js";
 import { CodingProblem } from "../models/CodingProblem.js";
 import { MCQQuestion } from "../models/MCQQuestion.js";
+import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
 
 /**
  * Extract YouTube Video ID from various YouTube URL formats
@@ -443,3 +444,62 @@ export async function submitModuleQuiz(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * @route   POST /api/modules/:moduleId/run-code
+ * @desc    Direct module code runner
+ * @access  Protected (Authenticated)
+ */
+export async function runModuleCodeDirect(req, res, next) {
+  try {
+    const { moduleId } = req.params;
+    const { problemId, language = "python", sourceCode, isSubmit = false } = req.body;
+
+    if (!sourceCode) {
+      return res.status(400).json({ success: false, message: "Source code is required." });
+    }
+
+    const mod = await CourseModule.findById(moduleId);
+    if (!mod) {
+      return res.status(404).json({ success: false, message: "Module not found." });
+    }
+
+    const codingProblems = mod.codingProblems || [];
+    let problem = null;
+    if (problemId) {
+      problem = codingProblems.find((p) => String(p._id) === String(problemId));
+    }
+    if (!problem && codingProblems.length > 0) {
+      problem = codingProblems[0];
+    }
+
+    if (!problem) {
+      return res.status(404).json({ success: false, message: "Coding challenge not found in this module." });
+    }
+
+    const allCases = problem.testCases || [];
+    const testCasesToRun = isSubmit
+      ? allCases
+      : allCases.filter((tc) => !tc.isHidden).length > 0
+      ? allCases.filter((tc) => !tc.isHidden)
+      : allCases;
+
+    const formattedTestCases = testCasesToRun.map((tc) => ({
+      input: tc.input || "",
+      expectedOutput: tc.output || tc.expectedOutput || "",
+      isHidden: isSubmit ? Boolean(tc.isHidden) : false,
+    }));
+
+    const result = await runCodeAgainstTestCases(language, sourceCode, formattedTestCases);
+
+    res.json({
+      success: true,
+      isSubmit: Boolean(isSubmit),
+      problemId: problem._id,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
