@@ -29,6 +29,10 @@ const courseSchema = new mongoose.Schema(
       enum: ["Beginner", "Intermediate", "Advanced", "Beginner to Intermediate", "Beginner → Intermediate", "Intermediate to Advanced"],
       default: "Beginner",
     },
+    languages: {
+      type: [String],
+      default: ["python", "javascript", "cpp", "java", "c"],
+    },
     instructor: {
       type: String,
       default: "VCET Faculty Coordinator",

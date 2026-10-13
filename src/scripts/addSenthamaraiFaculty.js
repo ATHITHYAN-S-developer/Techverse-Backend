@@ -45,7 +45,7 @@ async function run() {
     bio: "Faculty member in the Department of Computer Science & Engineering, VCET.",
     isActive: true,
     points: { totalPoints: 100, level: 1, rank: 1 },
-    streak: { currentStreak: 5, longestStreak: 12, freezeCount: 0 },
+    streak: { currentStreak: 0, longestStreak: 0, freezeCount: 0 },
   };
 
   if (faculty) {

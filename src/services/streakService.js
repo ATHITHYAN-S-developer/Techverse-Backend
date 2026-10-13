@@ -74,12 +74,12 @@ export async function updateStreakOnActivity(studentId) {
       return {
         ok: true,
         advanced: false,
-        currentStreak: Math.max(previousStreak, 1),
-        longestStreak: Math.max(longestStreak, previousStreak, 1),
+        currentStreak: previousStreak,
+        longestStreak: Math.max(longestStreak, previousStreak),
       };
     }
 
-    let newStreak = 1;
+    let newStreak = 0;
     let preserved = false;
 
     if (lastDate) {
@@ -87,7 +87,7 @@ export async function updateStreakOnActivity(studentId) {
 
       if (diffDays === 0) {
         // Same calendar day
-        newStreak = Math.max(previousStreak, 1);
+        newStreak = previousStreak;
       } else if (diffDays === 1) {
         // Consecutive calendar day -> advance streak!
         newStreak = previousStreak + 1;
@@ -99,12 +99,12 @@ export async function updateStreakOnActivity(studentId) {
           user.streak.freezeCount -= 1;
         }
       } else {
-        // More than 2 days gap -> restart streak at 1
-        newStreak = 1;
+        // More than 2 days gap -> restart streak at 0
+        newStreak = 0;
       }
     } else {
-      // First day
-      newStreak = 1;
+      // First day -> streak starts at 0
+      newStreak = 0;
     }
 
     const updatedLongest = Math.max(longestStreak, newStreak);

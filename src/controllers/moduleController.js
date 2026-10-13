@@ -465,6 +465,19 @@ export async function runModuleCodeDirect(req, res, next) {
       return res.status(404).json({ success: false, message: "Module not found." });
     }
 
+    // Enforce the languages the faculty allowed for the parent course. An empty
+    // list (legacy courses) falls back to allowing every supported language.
+    const course = await Course.findById(mod.courseId).select("languages");
+    const allowedLanguages = Array.isArray(course?.languages) ? course.languages : [];
+    const requestedLanguage = String(language).toLowerCase();
+    if (allowedLanguages.length > 0 && !allowedLanguages.includes(requestedLanguage)) {
+      return res.status(400).json({
+        success: false,
+        code: "LANGUAGE_NOT_ALLOWED",
+        message: `This course only allows: ${allowedLanguages.join(", ")}. You cannot submit code in '${requestedLanguage}'.`,
+      });
+    }
+
     const codingProblems = mod.codingProblems || [];
     let problem = null;
     if (problemId) {

@@ -33,6 +33,7 @@
     "export:logins": "node src/scripts/exportLoginJson.js",
     "seed:logins": "node src/scripts/seedLoginJson.js",
     "seed:enrollments": "node src/scripts/seedEnrollments.js",
+    "seed:dummy-faculty": "node src/scripts/addDummyFaculty.js",
     "backfill": "node src/scripts/backfillGamification.js",
     "backfill:certificates": "node src/scripts/backfillCourseCertificates.js",
     "hash:passwords": "node src/scripts/hashPasswords.js",

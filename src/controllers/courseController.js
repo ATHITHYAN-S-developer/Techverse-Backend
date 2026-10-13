@@ -24,6 +24,36 @@ import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
  */
 const idOf = (v) => String(v?._id || v || "");
 
+const ALLOWED_COURSE_LANGUAGES = ["python", "javascript", "cpp", "java", "c"];
+
+/**
+ * Normalize the `languages` value coming from a multipart form (JSON string,
+ * comma-separated string, array) into a unique, lower-cased list restricted to
+ * the languages the coding arena actually supports.
+ */
+function normalizeCourseLanguages(raw) {
+  if (raw === undefined || raw === null) return undefined;
+
+  let list = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      list = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      list = trimmed.split(",");
+    }
+  }
+  if (!Array.isArray(list)) list = [list];
+
+  const cleaned = list
+    .map((l) => String(l).trim().toLowerCase())
+    .filter((l) => ALLOWED_COURSE_LANGUAGES.includes(l));
+
+  return [...new Set(cleaned)];
+}
+
 
 /**
  * Remove internal ownership fields from a course object before it is exposed
@@ -509,6 +539,8 @@ export async function createCourse(req, res, next) {
       thumbnailUrl,
     } = req.body;
 
+    const requestedLanguages = normalizeCourseLanguages(req.body.languages);
+
     if (!title || !description) {
       return res.status(400).json({ success: false, message: "Title and description are required." });
     }
@@ -582,6 +614,12 @@ export async function createCourse(req, res, next) {
     const targetAudience = req.body.targetAudience === "all" ? "all" : "department";
     const isDepartmentOnly = targetAudience === "department" || req.body.isDepartmentOnly === "true" || req.body.isDepartmentOnly === true;
 
+    // Languages only apply to Programming courses; otherwise keep the full default set.
+    const finalLanguages =
+      category === "Programming" && requestedLanguages !== undefined
+        ? requestedLanguages
+        : ALLOWED_COURSE_LANGUAGES;
+
     // Always resolve departmentId: from HOD, or fallback to assigned faculty's department
     let resolvedDepartmentId = req.user.departmentId ? idOf(req.user.departmentId) : undefined;
     if (!resolvedDepartmentId && facultyUser?.departmentId) {
@@ -594,6 +632,7 @@ export async function createCourse(req, res, next) {
       description,
       category,
       level,
+      languages: finalLanguages,
       instructor: instructor || instructorName || fallbackInstructor,
       instructorName: instructorName || instructor || fallbackInstructor,
       assignedFacultyId,
@@ -748,6 +787,15 @@ export async function updateCourse(req, res, next) {
     // Slug is immutable once a course is created — keeps course URLs stable.
     delete updates.slug;
     delete updates.assignedFacultyName;
+
+    if (updates.languages !== undefined) {
+      const effectiveCategory = updates.category || course.category;
+      if (effectiveCategory === "Programming") {
+        updates.languages = normalizeCourseLanguages(updates.languages) || [];
+      } else {
+        delete updates.languages;
+      }
+    }
 
     if ((req.user.role === "admin" || req.user.role === "hod") && updates.assignedFacultyId) {
       if (!mongoose.Types.ObjectId.isValid(updates.assignedFacultyId)) {
@@ -1242,6 +1290,18 @@ export async function runModuleCodeHandler(req, res, next) {
 
     if (!course) {
       return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    // Enforce the languages the faculty allowed for this course. An empty list
+    // (legacy courses) falls back to allowing every supported language.
+    const allowedLanguages = Array.isArray(course.languages) ? course.languages : [];
+    const requestedLanguage = String(language).toLowerCase();
+    if (allowedLanguages.length > 0 && !allowedLanguages.includes(requestedLanguage)) {
+      return res.status(400).json({
+        success: false,
+        code: "LANGUAGE_NOT_ALLOWED",
+        message: `This course only allows: ${allowedLanguages.join(", ")}. You cannot submit code in '${requestedLanguage}'.`,
+      });
     }
 
     const isModId = mongoose.Types.ObjectId.isValid(moduleId);

@@ -38,11 +38,11 @@ const enrollmentSchema = new mongoose.Schema(
     },
     currentStreak: {
       type: Number,
-      default: 1,
+      default: 0,
     },
     longestStreak: {
       type: Number,
-      default: 1,
+      default: 0,
     },
     lastActivityDate: {
       type: String, // YYYY-MM-DD

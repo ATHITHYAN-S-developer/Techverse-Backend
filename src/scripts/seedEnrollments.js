@@ -12,15 +12,18 @@
  * student, so the dashboard rendered as one long empty state.
  *
  * Design notes:
- *  - Deterministic. Progress and streak are derived from a hash of the
- *    student's _id, so a second run produces byte-identical results and nothing
- *    shifts under a user who already has real activity.
+ *  - Deterministic. Progress is derived from a hash of the student's _id, so a
+ *    second run produces byte-identical results and nothing shifts under a user
+ *    who already has real activity.
  *  - Idempotent. Enrollments upsert on the (studentId, courseId) unique index and
  *    progress upserts on (studentId, moduleId).
  *  - Non-destructive by default. Real attempts, certificates and points a
  *    student earned are never lowered: the generated values are only applied
  *    while the student has no activity at all. `--reset-progress` is the
  *    explicit opt-in to overwrite.
+ *  - Streaks are never fabricated. A student's streak is real state owned by the
+ *    streak service (see services/streakService.js) and only advances on genuine
+ *    activity, so this seeder leaves it untouched.
  */
 
 import mongoose from "mongoose";
@@ -86,15 +89,6 @@ function makeRng(seed) {
 }
 
 const pick = (rng, min, max) => min + Math.floor(rng() * (max - min + 1));
-
-/** YYYY-MM-DD for a day offset from today, in local time. */
-function dayOffset(days) {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-}
 
 function planFor(courseCode) {
   const plan = BRANCH_PLAN[courseCode];
@@ -177,7 +171,6 @@ async function main() {
 
   const enrollmentOps = [];
   const progressOps = [];
-  const userOps = [];
   const summary = {
     byStatus: { not_started: 0, in_progress: 0, completed: 0 },
     perBranch: new Map(),
@@ -213,10 +206,6 @@ async function main() {
       summary.byStatus[status] += 1;
       branchEnrollments += 1;
 
-      // Streak is a per-student property, not per-course, so read it from the
-      // same rng draw and reuse it across the student's courses.
-      const currentStreak = rng() < 0.45 ? 0 : pick(rng, 1, 42);
-      const longestStreak = Math.max(currentStreak, pick(rng, 1, 96));
       const lastActiveAt = new Date(Date.now() - pick(rng, 0, 6) * 86400000);
 
       enrollmentOps.push({
@@ -228,9 +217,6 @@ async function main() {
               progressPercentage,
               currentModuleId: next ? next._id : null,
               status,
-              currentStreak,
-              longestStreak,
-              lastActiveDate: currentStreak > 0 ? dayOffset(0) : dayOffset(-pick(rng, 1, 12)),
               lastActivityAt: lastActiveAt,
               startedAt: new Date(lastActiveAt.getTime() - pick(rng, 5, 120) * 86400000),
               completedAt: status === "completed" ? lastActiveAt : null,
@@ -289,24 +275,6 @@ async function main() {
       }
     }
 
-    const activeStreak = rng() < 0.45 ? 0 : pick(rng, 1, 42);
-    userOps.push({
-      updateOne: {
-        filter: { _id: student._id },
-        update: {
-          $max: {
-            "streak.longestStreak": Math.max(activeStreak, pick(rng, 1, 96)),
-          },
-          $set: {
-            "streak.currentStreak": activeStreak,
-            "streak.lastActiveDate":
-              activeStreak > 0 ? dayOffset(0) : dayOffset(-pick(rng, 1, 12)),
-          },
-        },
-        upsert: false,
-      },
-    });
-
     summary.perBranch.set(
       student.courseCode,
       (summary.perBranch.get(student.courseCode) || 0) + branchEnrollments
@@ -318,7 +286,6 @@ async function main() {
   } else {
     if (enrollmentOps.length) await Enrollment.bulkWrite(enrollmentOps, { ordered: false });
     if (progressOps.length) await ModuleProgress.bulkWrite(progressOps, { ordered: false });
-    if (userOps.length) await User.bulkWrite(userOps, { ordered: false });
   }
 
   console.log(
@@ -328,7 +295,6 @@ async function main() {
       `${summary.byStatus.completed} completed)`
   );
   console.log(`Progress   : ${progressOps.length} module records upserted`);
-  console.log(`Gamification: ${userOps.length} student profiles updated`);
 
   console.log("\nEnrollments per branch:");
   for (const [code, n] of [...summary.perBranch].sort()) {

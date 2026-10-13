@@ -30,10 +30,66 @@ function friendlyCompilerError(cmd, rawError) {
   return rawError || `Failed to run '${cmd}'. Install the required compiler (see 'npm run requirements').`;
 }
 
+// Well-known install locations for the native compilers on Windows (MSYS2 and
+// WinLibs/MinGW builds). The first candidate that answers `--version` wins.
+const WINDOWS_COMPILER_DIRS = [
+  "C:\\msys64\\ucrt64\\bin",
+  "C:\\msys64\\mingw64\\bin",
+  "C:\\msys64\\clang64\\bin",
+  "C:\\mingw64\\bin",
+  "C:\\MinGW\\bin",
+  "C:\\w64devkit\\bin",
+];
+
+const resolvedToolCache = new Map();
+
+/**
+ * Resolves a native toolchain command, falling back to PATH entries. On Windows
+ * it also probes the well-known compiler install directories above so a compiler
+ * installed via MSYS2/WinLibs is found even when it is not on the system PATH.
+ * Returns the command to spawn (absolute path or bare command name).
+ */
+function resolveTool(command) {
+  if (resolvedToolCache.has(command)) return resolvedToolCache.get(command);
+
+  const candidates = [command];
+  if (process.platform === "win32") {
+    for (const dir of WINDOWS_COMPILER_DIRS) {
+      candidates.push(path.join(dir, `${command}.exe`));
+    }
+  }
+
+  for (const cand of candidates) {
+    const isPath = cand.includes(path.sep);
+    try {
+      const res = spawnSync(cand, ["--version"], {
+        encoding: "utf8",
+        timeout: 4000,
+        windowsHide: true,
+        shell: !isPath,
+      });
+      if (!res.error && res.status === 0) {
+        resolvedToolCache.set(command, cand);
+        return cand;
+      }
+    } catch {
+      /* try the next candidate */
+    }
+  }
+
+  resolvedToolCache.set(command, command);
+  return command;
+}
+
+/** Directory holding a resolved toolchain binary (used to extend child PATH). */
+function toolchainBinDir(command) {
+  return command && command.includes(path.sep) ? path.dirname(command) : null;
+}
+
 /**
  * Builds the execute configuration for a language by writing the source into the
  * temporary sandbox directory and (for compiled languages) producing the compile step.
- * Returns { compile?, run } or null when the language is not supported.
+ * Returns { compile?, run, binDir? } or null when the language is not supported.
  */
 function buildRunner(language, sourceCode, tmpDir) {
   if (language === "javascript" || language === "js") {
@@ -82,21 +138,25 @@ function resolvePythonCmd() {
 
   if (language === "c") {
     const filePath = path.join(tmpDir, "solution.c");
-    const binPath = path.join(tmpDir, "solution");
+    const binPath = path.join(tmpDir, process.platform === "win32" ? "solution.exe" : "solution");
+    const gcc = resolveTool("gcc");
     fs.writeFileSync(filePath, sourceCode, "utf8");
     return {
-      compile: { cmd: "gcc", args: ["-O2", "-Wall", filePath, "-o", binPath, "-lm"] },
+      compile: { cmd: gcc, args: ["-O2", "-Wall", filePath, "-o", binPath, "-lm"] },
       run: { cmd: binPath, args: [] },
+      binDir: toolchainBinDir(gcc),
     };
   }
 
   if (language === "cpp" || language === "c++") {
     const filePath = path.join(tmpDir, "solution.cpp");
-    const binPath = path.join(tmpDir, "solution");
+    const binPath = path.join(tmpDir, process.platform === "win32" ? "solution.exe" : "solution");
+    const gpp = resolveTool("g++");
     fs.writeFileSync(filePath, sourceCode, "utf8");
     return {
-      compile: { cmd: "g++", args: ["-O2", "-Wall", filePath, "-o", binPath] },
+      compile: { cmd: gpp, args: ["-O2", "-Wall", filePath, "-o", binPath] },
       run: { cmd: binPath, args: [] },
+      binDir: toolchainBinDir(gpp),
     };
   }
 
@@ -115,17 +175,24 @@ function resolvePythonCmd() {
 /**
  * Executes a single test case in a temporary sandbox.
  */
-async function executeProcess(command, args, inputData, timeoutMs = TIMEOUT_MS) {
+async function executeProcess(command, args, inputData, timeoutMs = TIMEOUT_MS, extraPath = null) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     let stdout = "";
     let stderr = "";
     let isTimedOut = false;
 
+    // Extend PATH with the toolchain bin dir so a compiler/shared runtime that is
+    // not on the system PATH can still resolve its DLLs at compile/run time.
+    const spawnEnv = extraPath
+      ? { ...process.env, PATH: `${extraPath}${path.delimiter}${process.env.PATH || ""}` }
+      : undefined;
+
     let proc;
     try {
       proc = spawn(command, args, {
         windowsHide: true,
+        env: spawnEnv,
       });
     } catch (err) {
       return resolve({
@@ -235,13 +302,19 @@ export async function runCodeAgainstTestCases(language, sourceCode, testCases = 
       };
     }
 
+    // Prepend the toolchain's own bin directory (if any) so a compiler installed
+    // outside PATH can still locate its runtime DLLs while compiling and running.
+    const extraPath =
+      runner.binDir || (runner.compile && toolchainBinDir(runner.compile.cmd)) || null;
+
     // Compile step (C / C++ / Java) before executing any test case
     if (runner?.compile) {
       const compiled = await executeProcess(
         runner.compile.cmd,
         runner.compile.args,
         undefined,
-        COMPILE_TIMEOUT_MS
+        COMPILE_TIMEOUT_MS,
+        extraPath
       );
       if (!compiled.success) {
         const compileError = friendlyCompilerError(runner.compile.cmd, compiled.error);
@@ -267,7 +340,7 @@ export async function runCodeAgainstTestCases(language, sourceCode, testCases = 
       const inputStr = tc.input || "";
       const expectedStr = normalizeOutput(tc.expectedOutput || tc.expected || "");
 
-      const runResult = await executeProcess(runner.run.cmd, runner.run.args, inputStr);
+      const runResult = await executeProcess(runner.run.cmd, runner.run.args, inputStr, undefined, extraPath);
 
       const actualStr = normalizeOutput(runResult.stdout);
       const isPassed = runResult.success && actualStr === expectedStr;

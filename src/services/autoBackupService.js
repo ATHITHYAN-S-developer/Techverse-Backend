@@ -12,7 +12,10 @@ const BACKUP_MONGO_PORT = ENV.BACKUP_MONGO_PORT || 27018;
 const PRIMARY_MONGO_URI = ENV.MONGO_URI || "mongodb://127.0.0.1:27017/techverse";
 const BACKUP_MONGO_URI = ENV.BACKUP_MONGO_URI || `mongodb://127.0.0.1:${BACKUP_MONGO_PORT}/techverse`;
 
+const MONGOD_SERVER_ROOT = "C:\\Program Files\\MongoDB\\Server";
+
 const MONGOD_POSSIBLE_PATHS = [
+  "C:\\Program Files\\MongoDB\\Server\\8.3\\bin\\mongod.exe",
   "C:\\Program Files\\MongoDB\\Server\\8.2\\bin\\mongod.exe",
   "C:\\Program Files\\MongoDB\\Server\\8.0\\bin\\mongod.exe",
   "C:\\Program Files\\MongoDB\\Server\\7.0\\bin\\mongod.exe",
@@ -63,6 +66,21 @@ function findMongodExe() {
       return exePath;
     }
   }
+
+  // Scan for any installed MongoDB Server version (e.g. 8.3, 9.0, ...)
+  try {
+    const versions = fs.readdirSync(MONGOD_SERVER_ROOT, { withFileTypes: true });
+    for (const entry of versions) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(MONGOD_SERVER_ROOT, entry.name, "bin", "mongod.exe");
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  } catch {
+    // MongoDB Server directory not present, fall through to PATH lookup
+  }
+
   return "mongod";
 }
 
@@ -93,6 +111,13 @@ export async function ensureBackupMongoDaemon() {
       }
     );
     mongoProcess.unref();
+
+    // A missing mongod executable emits an async 'error' event. Without a
+    // listener this becomes an unhandled error that crashes the whole server.
+    await new Promise((resolve, reject) => {
+      mongoProcess.once("error", reject);
+      mongoProcess.once("spawn", resolve);
+    });
 
     // Poll until connection is established
     for (let i = 1; i <= 10; i++) {
