@@ -491,19 +491,25 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
     // 5b. Final module passed -> issue the course completion certificate. This is
     //     the path students actually take, so the course cert has to be minted
     //     here too, not only from the standalone mark-complete endpoint.
+    //     The certificate is only issued if the course has certificateEnabled = true.
     if (totalModules > 0 && enrollment.progressPercentage >= 100 && enrollment.status !== "completed") {
       enrollment.status = "completed";
       enrollment.completedAt = enrollment.completedAt || new Date();
 
-      try {
-        const result = await issueCertificate({
-          studentId,
-          courseId,
-          score: scorePercentage,
-        });
-        courseCertificate = result.certificate || null;
-      } catch (certErr) {
-        console.warn("Course completion certificate issue notice:", certErr.message);
+      // Only issue certificate if the HOD/Admin enabled it for this course
+      if (course?.certificateEnabled !== false) {
+        try {
+          const result = await issueCertificate({
+            studentId,
+            courseId,
+            score: scorePercentage,
+          });
+          courseCertificate = result.certificate || null;
+        } catch (certErr) {
+          console.warn("Course completion certificate issue notice:", certErr.message);
+        }
+      } else {
+        console.info(`Certificate skipped for course '${course?.title}': certificateEnabled=false`);
       }
     } else {
       enrollment.progressPercentage = enrollment.progressPercentage || 0;

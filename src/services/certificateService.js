@@ -34,6 +34,10 @@ export async function generateCourseCertificate(studentIdOrParams, courseIdParam
     throw new Error("Course or Student record not found in MongoDB.");
   }
 
+  if (course.certificateEnabled === false) {
+    throw new Error(`Certificates are disabled for course '${course.title}'.`);
+  }
+
   const resolvedCourseId = course._id;
 
   // 2. Check existing course completion certificate in MongoDB

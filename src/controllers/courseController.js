@@ -788,6 +788,10 @@ export async function updateCourse(req, res, next) {
       updates.isDepartmentOnly = updates.targetAudience === "department";
     }
 
+    if (updates.certificateEnabled !== undefined) {
+      updates.certificateEnabled = updates.certificateEnabled === "true" || updates.certificateEnabled === true;
+    }
+
     if ((updates.isDepartmentOnly || updates.targetAudience === "department") && !course.departmentId) {
       if (req.user.departmentId) {
         updates.departmentId = idOf(req.user.departmentId);
@@ -1007,16 +1011,21 @@ export async function completeModule(req, res, next) {
     if (enrollment.progressPercentage >= 100 && enrollment.status !== "completed") {
       enrollment.status = "completed";
       enrollment.completedAt = new Date();
-      try {
-        certificateIssued = await issueCertificate({
-          studentId,
-          courseId,
-          title: `Full Completion Certificate`,
-          type: "course",
-          score: 100,
-        });
-      } catch (certErr) {
-        console.warn("Certificate auto-issue notice:", certErr.message);
+      // Only issue certificate if the HOD/Admin enabled it for this course
+      if (courseDoc.certificateEnabled !== false) {
+        try {
+          certificateIssued = await issueCertificate({
+            studentId,
+            courseId,
+            title: `Full Completion Certificate`,
+            type: "course",
+            score: 100,
+          });
+        } catch (certErr) {
+          console.warn("Certificate auto-issue notice:", certErr.message);
+        }
+      } else {
+        console.info(`Certificate skipped for course '${courseDoc.title}': certificateEnabled=false`);
       }
     } else {
       enrollment.status = "in_progress";
