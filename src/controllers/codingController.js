@@ -425,6 +425,7 @@ export async function createCodingTest(req, res, next) {
       memoryLimit = 256,
       languages = ["python", "javascript", "cpp", "java", "c"],
       problems = [],
+      mcqs = [],
       settings = {},
       isPublished = true,
       targetAudience = "all",
@@ -464,6 +465,7 @@ export async function createCodingTest(req, res, next) {
       memoryLimit,
       languages,
       problems,
+      mcqs,
       settings: {
         fullscreenRequired: settings.fullscreenRequired !== false,
         antiCopy: settings.antiCopy !== false,

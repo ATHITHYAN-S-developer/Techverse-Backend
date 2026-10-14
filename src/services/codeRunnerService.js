@@ -8,6 +8,20 @@ import { codeRunSemaphore } from "./semaphore.js";
 
 const TIMEOUT_MS = 3000; // 3 seconds max per test case
 const COMPILE_TIMEOUT_MS = 5000; // 5 seconds max for compilation
+const MAX_SPAWN_ATTEMPTS = 4; // retries for a transient Windows launch failure
+const SPAWN_RETRY_DELAY_MS = 150;
+
+/**
+ * Windows can transiently refuse to launch a freshly written executable (for
+ * example while an antivirus/search indexer holds the file) and surfaces a
+ * generic "spawn UNKNOWN" error. Such failures succeed on a short retry, so we
+ * detect them and try again instead of reporting a bogus Runtime Error.
+ */
+function isTransientSpawnError(err) {
+  if (!err) return false;
+  const message = err.message || "";
+  return err.code === "UNKNOWN" || /spawn UNKNOWN/i.test(message);
+}
 
 /**
  * Normalizes output string by removing carriage returns and trimming trailing whitespaces.
@@ -41,6 +55,42 @@ const WINDOWS_COMPILER_DIRS = [
   "C:\\w64devkit\\bin",
 ];
 
+/**
+ * Discovers MinGW toolchains installed via winget/WinLibs (their bin directory
+ * lives in a version-specific package folder) so a freshly installed compiler
+ * is found even when the running process has not picked up the updated PATH.
+ */
+function discoverWingetCompilerDirs() {
+  if (process.platform !== "win32") return [];
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) return [];
+
+  const packagesRoot = path.join(localAppData, "Microsoft", "WinGet", "Packages");
+  const dirs = [];
+  try {
+    for (const entry of fs.readdirSync(packagesRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !/WinLibs/i.test(entry.name)) continue;
+      for (const sub of ["mingw64", "mingw32", "ucrt64", "clang64"]) {
+        const binDir = path.join(packagesRoot, entry.name, sub, "bin");
+        if (fs.existsSync(binDir)) dirs.push(binDir);
+      }
+    }
+  } catch {
+    /* winget packages directory not present */
+  }
+  return dirs;
+}
+
+let windowsCompilerDirsCache = null;
+
+/** All Windows compiler bin directories (well-known + winget-discovered). */
+function windowsCompilerDirs() {
+  if (!windowsCompilerDirsCache) {
+    windowsCompilerDirsCache = [...WINDOWS_COMPILER_DIRS, ...discoverWingetCompilerDirs()];
+  }
+  return windowsCompilerDirsCache;
+}
+
 const resolvedToolCache = new Map();
 
 /**
@@ -54,7 +104,7 @@ function resolveTool(command) {
 
   const candidates = [command];
   if (process.platform === "win32") {
-    for (const dir of WINDOWS_COMPILER_DIRS) {
+    for (const dir of windowsCompilerDirs()) {
       candidates.push(path.join(dir, `${command}.exe`));
     }
   }
@@ -175,9 +225,14 @@ function resolvePythonCmd() {
 /**
  * Executes a single test case in a temporary sandbox.
  */
-async function executeProcess(command, args, inputData, timeoutMs = TIMEOUT_MS, extraPath = null) {
+async function executeProcess(command, args, inputData, timeoutMs = TIMEOUT_MS, extraPath = null, attempt = 0) {
   return new Promise((resolve) => {
     const startTime = Date.now();
+
+    const retrySpawn = () =>
+      setTimeout(() => {
+        executeProcess(command, args, inputData, timeoutMs, extraPath, attempt + 1).then(resolve);
+      }, SPAWN_RETRY_DELAY_MS);
     let stdout = "";
     let stderr = "";
     let isTimedOut = false;
@@ -195,6 +250,10 @@ async function executeProcess(command, args, inputData, timeoutMs = TIMEOUT_MS, 
         env: spawnEnv,
       });
     } catch (err) {
+      if (isTransientSpawnError(err) && attempt < MAX_SPAWN_ATTEMPTS - 1) {
+        retrySpawn();
+        return;
+      }
       return resolve({
         success: false,
         error: `Failed to spawn process: ${err.message}`,
@@ -237,6 +296,10 @@ async function executeProcess(command, args, inputData, timeoutMs = TIMEOUT_MS, 
 
     proc.on("error", (err) => {
       clearTimeout(timer);
+      if (isTransientSpawnError(err) && attempt < MAX_SPAWN_ATTEMPTS - 1) {
+        retrySpawn();
+        return;
+      }
       resolve({
         success: false,
         status: "Runtime Error",

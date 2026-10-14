@@ -18,6 +18,42 @@ const testCaseSchema = new mongoose.Schema(
   { _id: true }
 );
 
+const mcqSchema = new mongoose.Schema(
+  {
+    question: {
+      type: String,
+      required: [true, "MCQ question text is required"],
+      trim: true,
+    },
+    options: {
+      type: [String],
+      validate: {
+        validator: (arr) => Array.isArray(arr) && arr.filter((o) => String(o).trim()).length >= 2,
+        message: "An MCQ must have at least two options",
+      },
+      default: [],
+    },
+    correctAnswer: {
+      type: Number, // index into options
+      default: 0,
+    },
+    explanation: {
+      type: String,
+      default: "",
+    },
+    difficulty: {
+      type: String,
+      enum: ["Easy", "Medium", "Hard"],
+      default: "Medium",
+    },
+    marks: {
+      type: Number,
+      default: 1,
+    },
+  },
+  { _id: true }
+);
+
 const problemSchema = new mongoose.Schema(
   {
     title: {
@@ -143,6 +179,7 @@ const codingTestSchema = new mongoose.Schema(
       default: ["python", "javascript", "cpp", "java", "c"],
     },
     problems: [problemSchema],
+    mcqs: [mcqSchema],
     settings: {
       fullscreenRequired: { type: Boolean, default: true },
       antiCopy: { type: Boolean, default: true },
