@@ -14,6 +14,7 @@ import {
   getModuleProgressionHandler,
   getCourseProgressionHandler,
   submitModuleTestHandler,
+  recordModuleTestViolationHandler,
   runModuleCodeHandler,
   getDepartmentFaculty,
 } from "../controllers/courseController.js";
@@ -56,6 +57,7 @@ router.get("/:slug/progression", authenticate, getCourseProgressionHandler);
 router.get("/:slug/modules/:moduleId/progression", authenticate, getModuleProgressionHandler);
 router.post("/:slug/modules/:moduleId/video-progress", authenticate, recordVideoProgressHandler);
 router.post("/:slug/modules/:moduleId/submit-test", authenticate, submitModuleTestHandler);
+router.post("/:slug/modules/:moduleId/violation", authenticate, recordModuleTestViolationHandler);
 router.post("/:slug/modules/:moduleId/run-code", authenticate, runModuleCodeHandler);
 router.get("/:slug", optionalAuth, getCourseBySlug);
 

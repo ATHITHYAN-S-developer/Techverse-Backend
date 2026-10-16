@@ -17,6 +17,12 @@ import {
 } from "../services/moduleProgressionService.js";
 import { deleteUploadedFile } from "../utils/fileUpload.js";
 import { runCodeAgainstTestCases } from "../services/codeRunnerService.js";
+import { TestViolation } from "../models/TestViolation.js";
+import {
+  getActiveTestLock,
+  createTestLock,
+  describeTestLock,
+} from "../services/testLockService.js";
 
 /**
  * Normalize an id reference (raw ObjectId, string, or populated object
@@ -613,6 +619,7 @@ export async function createCourse(req, res, next) {
 
     const targetAudience = req.body.targetAudience === "all" ? "all" : "department";
     const isDepartmentOnly = targetAudience === "department" || req.body.isDepartmentOnly === "true" || req.body.isDepartmentOnly === true;
+    const isTestMode = req.body.isTestMode === true || req.body.isTestMode === "true" || req.body.testMode === true || req.body.testMode === "true";
 
     // Languages only apply to Programming courses; otherwise keep the full default set.
     const finalLanguages =
@@ -640,6 +647,8 @@ export async function createCourse(req, res, next) {
       departmentId: resolvedDepartmentId,
       targetAudience,
       isDepartmentOnly,
+      isTestMode,
+      testMode: isTestMode,
       duration: duration || "Self-Paced",
       durationDays: durationDays ? Number(durationDays) : 30,
       thumbnail: finalThumbnail,
@@ -834,12 +843,20 @@ export async function updateCourse(req, res, next) {
     if (updates.targetAudience !== undefined) {
       updates.isDepartmentOnly = updates.targetAudience === "department";
     } else if (updates.isDepartmentOnly !== undefined) {
-      updates.targetAudience = (updates.isDepartmentOnly === "true" || updates.isDepartmentOnly === true) ? "department" : "all";
-      updates.isDepartmentOnly = updates.targetAudience === "department";
+      updates.isDepartmentOnly = updates.isDepartmentOnly === "true" || updates.isDepartmentOnly === true;
+      updates.targetAudience = updates.isDepartmentOnly ? "department" : "all";
     }
 
     if (updates.certificateEnabled !== undefined) {
       updates.certificateEnabled = updates.certificateEnabled === "true" || updates.certificateEnabled === true;
+    }
+
+    if (updates.isTestMode !== undefined) {
+      updates.isTestMode = updates.isTestMode === "true" || updates.isTestMode === true;
+      updates.testMode = updates.isTestMode;
+    } else if (updates.testMode !== undefined) {
+      updates.testMode = updates.testMode === "true" || updates.testMode === true;
+      updates.isTestMode = updates.testMode;
     }
 
     if ((updates.isDepartmentOnly || updates.targetAudience === "department") && !course.departmentId) {
@@ -1176,7 +1193,12 @@ export async function getModuleProgressionHandler(req, res, next) {
     const cert = await Certificate.findOne({ studentId, courseId: course._id, moduleId: moduleDoc._id });
     const isPrivileged = req.user.role === "admin" || req.user.role === "teacher";
     const isVideoMandatory = Boolean(moduleDoc.hasVideo && moduleDoc.isVideoMandatory);
-    const testUnlocked = isCourseDone || isPrivileged || (isUnlocked && (!isVideoMandatory || Boolean(progress.testUnlocked && progress.videoRequirementMet)));
+    let testUnlocked = isCourseDone || isPrivileged || (isUnlocked && (!isVideoMandatory || Boolean(progress.testUnlocked && progress.videoRequirementMet)));
+
+    // Test Mode violation lock: overrides test availability until it expires.
+    const activeLock = await getActiveTestLock(studentId, moduleDoc._id);
+    const lockInfo = describeTestLock(activeLock);
+    if (lockInfo) testUnlocked = false;
 
     res.json({
       success: true,
@@ -1190,6 +1212,10 @@ export async function getModuleProgressionHandler(req, res, next) {
       videoDurationSeconds: progress.videoDurationSeconds,
       videoRequirementMet: progress.videoRequirementMet,
       testUnlocked,
+      testLocked: Boolean(lockInfo),
+      testLockReason: lockInfo?.lockReason || "",
+      testLockUnlockAt: lockInfo?.unlockAt || null,
+      testLockHours: lockInfo?.lockHours || 0,
       testScore: progress.testScore,
       testPassed: progress.testPassed,
       testAttemptsCount: progress.testAttemptsCount,
@@ -1252,7 +1278,58 @@ export async function submitModuleTestHandler(req, res, next) {
       return res.status(404).json({ success: false, message: "Course not found." });
     }
 
+    // Resolve the module document (id or moduleNumber).
+    let moduleDoc = null;
+    if (mongoose.Types.ObjectId.isValid(moduleId)) {
+      moduleDoc = await CourseModule.findById(moduleId);
+    }
+    if (!moduleDoc) {
+      moduleDoc = await CourseModule.findOne({
+        $or: [{ _id: moduleId }, { moduleNumber: Number(moduleId) }],
+        courseId: course._id,
+      });
+    }
+
+    // Test Mode violation lock: block submission/retake while active.
+    const lockTestId = moduleDoc?._id || moduleId;
+    const activeLock = await getActiveTestLock(studentId, lockTestId);
+    if (activeLock) {
+      const info = describeTestLock(activeLock);
+      return res.status(403).json({
+        success: false,
+        code: "TEST_LOCKED",
+        message: info.lockReason,
+        isLocked: true,
+        unlockAt: info.unlockAt,
+        lockHours: info.lockHours,
+      });
+    }
+
+    const { submissionType = "manual", violations = [] } = req.body;
     const result = await gradeAndSubmitModuleTest(studentId, course._id, moduleId, req.body);
+
+    // Test Mode: lock this module's test when auto-submitted after violations.
+    const testModeEnabled = course.isTestMode === true || course.testMode === true;
+    const lockHours = Number(course.testModeLockHours) || 0;
+    if (
+      submissionType === "auto_violation" &&
+      testModeEnabled &&
+      lockHours > 0 &&
+      moduleDoc
+    ) {
+      const lock = await createTestLock({
+        studentId,
+        testType: "mcq",
+        testId: moduleDoc._id,
+        courseId: course._id,
+        moduleId: moduleDoc._id,
+        hours: lockHours,
+        violationsCount: Array.isArray(violations) ? violations.length : Number(violations) || 0,
+        reason: `Module ${moduleDoc.moduleNumber} test auto-submitted after security violations. Locked for ${lockHours} hour(s).`,
+      });
+      result.lock = describeTestLock(lock);
+    }
+
     res.json(result);
   } catch (error) {
     if (error.status === 403) {
@@ -1262,6 +1339,66 @@ export async function submitModuleTestHandler(req, res, next) {
         code: error.code || "FORBIDDEN",
       });
     }
+    next(error);
+  }
+}
+
+/**
+ * @route   POST /api/courses/:slug/modules/:moduleId/violation
+ * @desc    Record a security violation during a module knowledge test
+ * @access  Protected (Student)
+ */
+export async function recordModuleTestViolationHandler(req, res, next) {
+  try {
+    const { slug, moduleId } = req.params;
+    const studentId = req.user._id;
+    const { type, details = {}, currentViolationCount = 1 } = req.body;
+
+    const course = await Course.findOne({
+      $or: [{ slug }, { _id: slug.match(/^[0-9a-fA-F]{24}$/) ? slug : null }],
+    });
+    if (!course) {
+      return res.status(404).json({ success: false, message: "Course not found." });
+    }
+
+    let moduleDoc = null;
+    if (mongoose.Types.ObjectId.isValid(moduleId)) {
+      moduleDoc = await CourseModule.findById(moduleId);
+    }
+    if (!moduleDoc) {
+      moduleDoc = await CourseModule.findOne({
+        $or: [{ _id: moduleId }, { moduleNumber: Number(moduleId) }],
+        courseId: course._id,
+      });
+    }
+    if (!moduleDoc) {
+      return res.status(404).json({ success: false, message: "Module not found." });
+    }
+
+    await TestViolation.create({
+      studentId,
+      testType: "mcq",
+      testId: moduleDoc._id,
+      type,
+      details: typeof details === "string" ? details : JSON.stringify(details),
+      metadata: details,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"] || "",
+    });
+
+    const maxViolations = 3;
+    const shouldAutoSubmit = Number(currentViolationCount) >= maxViolations;
+
+    res.json({
+      success: true,
+      currentViolationCount,
+      maxViolations,
+      shouldAutoSubmit,
+      warningMessage: shouldAutoSubmit
+        ? `Maximum violation limit (${maxViolations}) reached. Test will now be submitted automatically.`
+        : `Security violation recorded (${type}). Violation ${currentViolationCount} of ${maxViolations}.`,
+    });
+  } catch (error) {
     next(error);
   }
 }

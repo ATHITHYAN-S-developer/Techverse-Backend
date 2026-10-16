@@ -5,6 +5,11 @@ import { Course } from "../models/Course.js";
 import { CourseModule } from "../models/CourseModule.js";
 import { ModuleProgress } from "../models/ModuleProgress.js";
 import { updateStreakOnActivity } from "../services/streakService.js";
+import {
+  getActiveTestLock,
+  createTestLock,
+  describeTestLock,
+} from "../services/testLockService.js";
 
 export async function getCourseAssessmentForCourse(req, res, next) {
   try {
@@ -40,25 +45,40 @@ export async function getTestById(req, res, next) {
 
     let isLocked = false;
     let lockReason = "";
+    let lockType = "";
+    let unlockAt = null;
+    let lockHours = 0;
     let totalModules = 0;
     let completedModulesCount = 0;
     let courseSlug = null;
 
     if (req.user?.role === "student") {
-      const course = await Course.findById(test.courseId);
-      if (course) {
-        courseSlug = course.slug;
-        const modules = await CourseModule.find({ courseId: course._id, isPublished: true });
-        totalModules = modules.length;
-        completedModulesCount = await ModuleProgress.countDocuments({
-          studentId: req.user._id,
-          courseId: course._id,
-          testPassed: true,
-        });
+      // 1. Violation lock takes top priority (set when auto-submitted after max violations).
+      const activeLock = await getActiveTestLock(req.user._id, test._id);
+      if (activeLock) {
+        const info = describeTestLock(activeLock);
+        isLocked = true;
+        lockReason = info.lockReason;
+        lockType = "violation";
+        unlockAt = info.unlockAt;
+        lockHours = info.lockHours;
+      } else {
+        const course = await Course.findById(test.courseId);
+        if (course) {
+          courseSlug = course.slug;
+          const modules = await CourseModule.find({ courseId: course._id, isPublished: true });
+          totalModules = modules.length;
+          completedModulesCount = await ModuleProgress.countDocuments({
+            studentId: req.user._id,
+            courseId: course._id,
+            testPassed: true,
+          });
 
-        if (totalModules > 0 && completedModulesCount < totalModules) {
-          isLocked = true;
-          lockReason = `You must complete and pass all ${totalModules} module tests in ${course.title} (${completedModulesCount}/${totalModules} completed) before taking the final course assessment.`;
+          if (totalModules > 0 && completedModulesCount < totalModules) {
+            isLocked = true;
+            lockReason = `You must complete and pass all ${totalModules} module tests in ${course.title} (${completedModulesCount}/${totalModules} completed) before taking the final course assessment.`;
+            lockType = "prerequisite";
+          }
         }
       }
     }
@@ -69,6 +89,9 @@ export async function getTestById(req, res, next) {
         ...testData,
         isLocked,
         lockReason,
+        lockType,
+        unlockAt,
+        lockHours,
         totalModules,
         completedModulesCount,
         courseSlug,
@@ -96,10 +119,24 @@ export async function submitTest(req, res, next) {
       timeSpentSeconds = 0,
     } = req.body;
 
-    const course = await Course.findOne({ slug: req.params.courseSlug }).select("_id");
+    const course = await Course.findOne({ slug: req.params.courseSlug });
     const test = await CourseAssessment.findById(testId);
     if (!course || !test || String(test.courseId) !== String(course._id)) {
       return res.status(404).json({ success: false, message: "Course assessment not found." });
+    }
+
+    // Block submission/retake while a violation lock is still active.
+    const activeLock = await getActiveTestLock(studentId, testId);
+    if (activeLock) {
+      const info = describeTestLock(activeLock);
+      return res.status(403).json({
+        success: false,
+        code: "TEST_LOCKED",
+        message: info.lockReason,
+        unlockAt: info.unlockAt,
+        lockHours: info.lockHours,
+        isLocked: true,
+      });
     }
 
     // Gate final course assessments: Must complete all module tests first
@@ -200,9 +237,34 @@ export async function submitTest(req, res, next) {
       });
     }
 
+    // Test Mode: lock the test for a set duration when it was auto-submitted
+    // after the student reached the violation limit.
+    let lockInfo = null;
+    const testModeEnabled = course.isTestMode === true || course.testMode === true;
+    const lockHours = Number(course.testModeLockHours) || 0;
+    if (
+      studentId &&
+      submissionType === "auto_violation" &&
+      testModeEnabled &&
+      lockHours > 0
+    ) {
+      const lock = await createTestLock({
+        studentId,
+        testType: "mcq",
+        testId: test._id,
+        courseId: course._id,
+        moduleId: null,
+        hours: lockHours,
+        violationsCount: Math.max(violations.length, test.maxViolations || 3),
+        reason: `Final assessment auto-submitted after ${Math.max(violations.length, test.maxViolations || 3)} security violations. Locked for ${lockHours} hour(s).`,
+      });
+      lockInfo = describeTestLock(lock);
+    }
+
     res.json({
       success: true,
       message: passed ? "Congratulations! You passed the test." : "Test completed. Keep practicing to improve!",
+      lock: lockInfo,
       result: {
         score,
         totalMarks,

@@ -111,6 +111,23 @@ const courseSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isTestMode: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    testMode: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    // When Test Mode is enabled, a test that is auto-submitted after reaching
+    // the violation limit is locked for this many hours before the student can retake it.
+    testModeLockHours: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,
