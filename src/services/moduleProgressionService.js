@@ -546,34 +546,48 @@ export async function submitModuleTest(studentId, courseId, moduleId, payload) {
   const scorePercentage = Math.round((correctCount / totalQuestions) * 100);
   const passed = scorePercentage >= requiredPassPercentage;
 
-  progress.testAttemptsCount = (progress.testAttemptsCount || 0) + 1;
-  progress.testScore = scorePercentage;
-  progress.testPassed = passed;
-  progress.testCompletedAt = new Date();
+  // The FIRST submission is the graded / official attempt. Any submission after it is a
+  // practice-only retake: the score is returned to the student for their own satisfaction
+  // but never overwrites the official score, the pass/fail state, module completion or
+  // certificates.
+  const previousAttempts = Number(progress.testAttemptsCount || 0);
+  const isPracticeAttempt = previousAttempts >= 1;
+  progress.testAttemptsCount = previousAttempts + 1;
 
   let completionResult = { isCompleted: false };
 
-  if (passed) {
-    completionResult = await finalizeModuleCompletionIfEligible({
-      studentId,
-      courseId,
-      moduleDoc,
-      progress,
-      scorePercentage,
-    });
-
-    if (!completionResult.isCompleted) {
-      // Test passed, but other required components (e.g. coding) are still pending
-      progress.status = "test_passed";
-    }
+  if (isPracticeAttempt) {
+    // Practice retake — deliberately do NOT touch testScore / testPassed / testCompletedAt.
   } else {
-    progress.status = "test_failed";
+    progress.testScore = scorePercentage;
+    progress.testPassed = passed;
+    progress.testCompletedAt = new Date();
+
+    if (passed) {
+      completionResult = await finalizeModuleCompletionIfEligible({
+        studentId,
+        courseId,
+        moduleDoc,
+        progress,
+        scorePercentage,
+      });
+
+      if (!completionResult.isCompleted) {
+        // Test passed, but other required components (e.g. coding) are still pending
+        progress.status = "test_passed";
+      }
+    } else {
+      progress.status = "test_failed";
+    }
   }
 
   await progress.save();
 
   return {
     success: true,
+    practice: isPracticeAttempt,
+    officialScore: progress.testScore,
+    officialPassed: Boolean(progress.testPassed),
     score: correctCount,
     totalQuestions,
     scorePercentage,
